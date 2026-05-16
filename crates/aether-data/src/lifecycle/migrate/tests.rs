@@ -603,6 +603,8 @@ fn mysql_and_sqlite_migrations_include_enabled_incrementals() {
             20260512000000,
             20260512090000,
             20260512110000,
+            20260513000000,
+            20260514000000,
         ]
     );
 }
