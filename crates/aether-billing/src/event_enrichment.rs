@@ -35,7 +35,10 @@ pub async fn enrich_usage_event_with_billing(
     data: &dyn BillingModelContextLookup,
     event: &mut UsageEvent,
 ) -> Result<(), DataLayerError> {
-    if !matches!(event.event_type, UsageEventType::Completed) {
+    if !matches!(
+        event.event_type,
+        UsageEventType::Completed | UsageEventType::Cancelled
+    ) {
         event.data.total_cost_usd = Some(0.0);
         event.data.actual_total_cost_usd = Some(0.0);
         return Ok(());
@@ -376,6 +379,109 @@ mod tests {
                 .and_then(Value::as_str),
             Some("complete")
         );
+    }
+
+    #[tokio::test]
+    async fn enriches_cancelled_usage_event_with_billing_snapshot() {
+        let lookup = TestLookup {
+            name_context: Some(
+                StoredBillingModelContext::new(
+                    "provider-1".to_string(),
+                    Some("pay_as_you_go".to_string()),
+                    Some("key-1".to_string()),
+                    Some(json!({"openai:responses": 0.5})),
+                    Some(60),
+                    "global-model-1".to_string(),
+                    "gpt-5".to_string(),
+                    None,
+                    Some(0.02),
+                    Some(json!({"tiers":[{"up_to":null,"input_price_per_1m":3.0,"output_price_per_1m":15.0,"cache_creation_price_per_1m":3.75,"cache_read_price_per_1m":0.30}]})),
+                    Some("model-1".to_string()),
+                    Some("gpt-5-upstream".to_string()),
+                    None,
+                    None,
+                    None,
+                )
+                .expect("billing context should build"),
+            ),
+            model_id_context: None,
+        };
+        let mut event = UsageEvent::new(
+            UsageEventType::Cancelled,
+            "req-billing-cancelled-1",
+            UsageEventData {
+                provider_name: "OpenAI".to_string(),
+                model: "gpt-5".to_string(),
+                provider_id: Some("provider-1".to_string()),
+                provider_api_key_id: Some("key-1".to_string()),
+                request_type: Some("chat".to_string()),
+                api_format: Some("openai:responses".to_string()),
+                endpoint_api_format: Some("openai:responses".to_string()),
+                input_tokens: Some(1_000),
+                output_tokens: Some(500),
+                cache_read_input_tokens: Some(100),
+                status_code: Some(499),
+                ..UsageEventData::default()
+            },
+        );
+
+        enrich_usage_event_with_billing(&lookup, &mut event)
+            .await
+            .expect("billing should succeed");
+
+        assert!(event.data.total_cost_usd.unwrap_or_default() > 0.0);
+        assert!(event.data.actual_total_cost_usd.unwrap_or_default() > 0.0);
+        assert_eq!(
+            event
+                .data
+                .request_metadata
+                .as_ref()
+                .and_then(|value| value.get("billing_snapshot"))
+                .and_then(|value| value.get("status"))
+                .and_then(Value::as_str),
+            Some("complete")
+        );
+        assert_eq!(
+            event
+                .data
+                .request_metadata
+                .as_ref()
+                .and_then(|value| value.get("billing_dimensions"))
+                .and_then(|value| value.get("request_count"))
+                .and_then(Value::as_i64),
+            Some(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_usage_event_remains_unbilled() {
+        let lookup = TestLookup {
+            name_context: None,
+            model_id_context: None,
+        };
+        let mut event = UsageEvent::new(
+            UsageEventType::Failed,
+            "req-billing-failed-1",
+            UsageEventData {
+                provider_name: "OpenAI".to_string(),
+                model: "gpt-5".to_string(),
+                provider_id: Some("provider-1".to_string()),
+                provider_api_key_id: Some("key-1".to_string()),
+                request_type: Some("chat".to_string()),
+                input_tokens: Some(1_000),
+                output_tokens: Some(500),
+                status_code: Some(500),
+                ..UsageEventData::default()
+            },
+        );
+
+        enrich_usage_event_with_billing(&lookup, &mut event)
+            .await
+            .expect("billing should succeed");
+
+        assert_eq!(event.data.total_cost_usd, Some(0.0));
+        assert_eq!(event.data.actual_total_cost_usd, Some(0.0));
+        assert!(event.data.request_metadata.is_none());
     }
 
     #[tokio::test]

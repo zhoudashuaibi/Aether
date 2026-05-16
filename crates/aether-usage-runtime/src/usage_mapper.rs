@@ -27,6 +27,7 @@ impl UsageMapper {
         }
 
         derive_missing_input_tokens(raw_usage, api_format, &mut usage);
+        copy_explicit_total_tokens(raw_usage, api_format, &mut usage);
         usage.normalize_cache_creation_breakdown()
     }
 
@@ -186,6 +187,22 @@ fn derive_missing_input_tokens(
     let inferred_input_tokens = total_tokens.saturating_sub(output_tokens);
     if inferred_input_tokens > 0 {
         usage.input_tokens = inferred_input_tokens;
+    }
+}
+
+fn copy_explicit_total_tokens(
+    raw_usage: &serde_json::Value,
+    api_format: &str,
+    usage: &mut StandardizedUsage,
+) {
+    let total_tokens = match api_family(api_format).as_str() {
+        "gemini" => numeric_i64(raw_usage.get("totalTokenCount")),
+        _ => numeric_i64(raw_usage.get("total_tokens")),
+    };
+    if let Some(total_tokens) = total_tokens.filter(|value| *value > 0) {
+        usage
+            .dimensions
+            .insert("total_tokens".to_string(), serde_json::json!(total_tokens));
     }
 }
 
