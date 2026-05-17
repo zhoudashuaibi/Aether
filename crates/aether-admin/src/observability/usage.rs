@@ -1011,6 +1011,29 @@ fn admin_usage_metadata_string<'a>(
         .filter(|value| !value.is_empty())
 }
 
+fn infer_client_family_from_user_agent(user_agent: &str) -> Option<&'static str> {
+    let normalized = user_agent.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized.starts_with("codex_vscode") {
+        return Some("codex_vscode");
+    }
+    if normalized.starts_with("codex") {
+        return Some("codex");
+    }
+    if normalized.contains("claude-code") || normalized.contains("claude_code") {
+        return Some("claude_code");
+    }
+    if normalized.contains("opencode") {
+        return Some("opencode");
+    }
+    if normalized.contains("geminicli") || normalized.contains("gemini-cli") {
+        return Some("gemini_cli");
+    }
+    None
+}
+
 pub fn admin_usage_client_family(item: &StoredRequestUsageAudit) -> Option<&str> {
     item.request_metadata
         .as_ref()
@@ -1025,6 +1048,10 @@ pub fn admin_usage_client_family(item: &StoredRequestUsageAudit) -> Option<&str>
         })
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            admin_usage_metadata_string(item, "user_agent")
+                .and_then(infer_client_family_from_user_agent)
+        })
 }
 
 fn admin_usage_active_request_json(
@@ -2433,6 +2460,31 @@ mod tests {
         assert_eq!(record["upstream_is_stream"], true);
         assert_eq!(record["client_requested_stream"], false);
         assert_eq!(record["client_is_stream"], false);
+    }
+
+    #[test]
+    fn admin_usage_record_infers_client_family_from_user_agent() {
+        let item = StoredRequestUsageAudit {
+            request_metadata: Some(json!({
+                "client_ip": "192.168.0.28",
+                "user_agent": "codex_vscode/0.131.0-alpha.9 (Windows 10.0.26200; x86_64)"
+            })),
+            ..sample_usage("completed", Some(200), None)
+        };
+
+        let record = admin_usage_record_json(
+            &item,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            false,
+            false,
+            None,
+        );
+        let active = admin_usage_active_request_json(&item, None, None, None);
+
+        assert_eq!(record["client_family"], "codex_vscode");
+        assert_eq!(record["client_ip"], "192.168.0.28");
+        assert_eq!(active["client_family"], "codex_vscode");
     }
 
     #[test]

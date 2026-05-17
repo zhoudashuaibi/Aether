@@ -334,6 +334,29 @@ fn users_me_usage_metadata_string<'a>(
         .filter(|value| !value.is_empty())
 }
 
+fn infer_client_family_from_user_agent(user_agent: &str) -> Option<&'static str> {
+    let normalized = user_agent.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized.starts_with("codex_vscode") {
+        return Some("codex_vscode");
+    }
+    if normalized.starts_with("codex") {
+        return Some("codex");
+    }
+    if normalized.contains("claude-code") || normalized.contains("claude_code") {
+        return Some("claude_code");
+    }
+    if normalized.contains("opencode") {
+        return Some("opencode");
+    }
+    if normalized.contains("geminicli") || normalized.contains("gemini-cli") {
+        return Some("gemini_cli");
+    }
+    None
+}
+
 fn users_me_usage_client_family(item: &StoredRequestUsageAudit) -> Option<&str> {
     item.request_metadata
         .as_ref()
@@ -352,6 +375,10 @@ fn users_me_usage_client_family(item: &StoredRequestUsageAudit) -> Option<&str> 
         })
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            users_me_usage_metadata_string(item, "user_agent")
+                .and_then(infer_client_family_from_user_agent)
+        })
 }
 
 fn build_users_me_usage_record_payload(
@@ -449,6 +476,9 @@ fn build_users_me_usage_active_payload(item: &StoredRequestUsageAudit) -> serde_
         "client_requested_stream": client_is_stream,
         "client_is_stream": client_is_stream,
         "has_format_conversion": item.has_format_conversion,
+        "client_family": users_me_usage_client_family(item),
+        "client_ip": users_me_usage_metadata_string(item, "client_ip"),
+        "user_agent": users_me_usage_metadata_string(item, "user_agent"),
         "target_model": item.target_model,
         "has_fallback": item.has_fallback(),
     });
@@ -1404,6 +1434,26 @@ mod tests {
         assert_eq!(active_payload["upstream_is_stream"], true);
         assert_eq!(active_payload["client_requested_stream"], false);
         assert_eq!(active_payload["client_is_stream"], false);
+    }
+
+    #[test]
+    fn user_usage_payload_infers_client_family_from_user_agent() {
+        let item = StoredRequestUsageAudit {
+            request_metadata: Some(json!({
+                "client_ip": "192.168.0.28",
+                "user_agent": "codex_vscode/0.131.0-alpha.9 (Windows 10.0.26200; x86_64)"
+            })),
+            ..sample_usage("completed")
+        };
+
+        let record_payload =
+            build_users_me_usage_record_payload(&item, false, &BTreeMap::new(), false);
+        let active_payload = build_users_me_usage_active_payload(&item);
+
+        assert_eq!(record_payload["client_family"], "codex_vscode");
+        assert_eq!(record_payload["client_ip"], "192.168.0.28");
+        assert_eq!(active_payload["client_family"], "codex_vscode");
+        assert_eq!(active_payload["client_ip"], "192.168.0.28");
     }
 
     #[test]
