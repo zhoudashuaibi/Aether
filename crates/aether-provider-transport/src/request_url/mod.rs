@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use regex::Regex;
+use serde_json::Value;
 use url::form_urlencoded;
 
 use crate::antigravity::{
@@ -32,6 +33,35 @@ pub fn build_transport_request_url(
     transport: &GatewayProviderTransportSnapshot,
     params: TransportRequestUrlParams<'_>,
 ) -> Option<String> {
+    build_transport_request_url_inner(transport, params, false)
+}
+
+pub fn build_transport_request_url_for_request_body(
+    transport: &GatewayProviderTransportSnapshot,
+    params: TransportRequestUrlParams<'_>,
+    provider_request_body: Option<&Value>,
+) -> Option<String> {
+    let gemini_embedding_batch =
+        gemini_embedding_request_body_uses_batch(params.provider_api_format, provider_request_body);
+    build_transport_request_url_inner(transport, params, gemini_embedding_batch)
+}
+
+pub fn gemini_embedding_request_body_uses_batch(
+    provider_api_format: &str,
+    provider_request_body: Option<&Value>,
+) -> bool {
+    aether_ai_formats::normalize_api_format_alias(provider_api_format) == "gemini:embedding"
+        && provider_request_body
+            .and_then(|body| body.get("requests"))
+            .and_then(Value::as_array)
+            .is_some_and(|requests| !requests.is_empty())
+}
+
+fn build_transport_request_url_inner(
+    transport: &GatewayProviderTransportSnapshot,
+    params: TransportRequestUrlParams<'_>,
+    gemini_embedding_batch: bool,
+) -> Option<String> {
     if let Some(url) = build_transport_hook_url(transport, params) {
         return Some(url);
     }
@@ -45,7 +75,9 @@ pub fn build_transport_request_url(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|path| expand_custom_path_template(path, build_path_params(params)));
+        .map(|path| {
+            expand_custom_path_template(path, build_path_params(params, gemini_embedding_batch))
+        });
 
     if let Some(path) = custom_path.as_deref() {
         let blocked_keys = if normalized_provider_api_format.starts_with("gemini:") {
@@ -55,6 +87,8 @@ pub fn build_transport_request_url(
         };
         let normalized_path = if normalized_provider_api_format == "gemini:generate_content" {
             normalize_gemini_content_action_path(path, params.upstream_is_stream)
+        } else if normalized_provider_api_format == "gemini:embedding" {
+            normalize_gemini_embedding_action_path(path, gemini_embedding_batch)
         } else {
             path.to_string()
         };
@@ -106,6 +140,7 @@ pub fn build_transport_request_url(
             &transport.endpoint.base_url,
             params.mapped_model?,
             params.request_query,
+            gemini_embedding_batch,
         ),
         "doubao:embedding" => build_passthrough_path_url(
             &transport.endpoint.base_url,
@@ -287,7 +322,10 @@ fn build_transport_hook_url(
     None
 }
 
-fn build_path_params(params: TransportRequestUrlParams<'_>) -> BTreeMap<&'static str, &str> {
+fn build_path_params(
+    params: TransportRequestUrlParams<'_>,
+    gemini_embedding_batch: bool,
+) -> BTreeMap<&'static str, &str> {
     let mut path_params = BTreeMap::new();
     if let Some(model) = params
         .mapped_model
@@ -302,7 +340,11 @@ fn build_path_params(params: TransportRequestUrlParams<'_>) -> BTreeMap<&'static
         path_params.insert(
             "action",
             if provider_api_format == "gemini:embedding" {
-                "embedContent"
+                if gemini_embedding_batch {
+                    "batchEmbedContents"
+                } else {
+                    "embedContent"
+                }
             } else if params.upstream_is_stream {
                 "streamGenerateContent"
             } else {
@@ -311,6 +353,14 @@ fn build_path_params(params: TransportRequestUrlParams<'_>) -> BTreeMap<&'static
         );
     }
     path_params
+}
+
+fn normalize_gemini_embedding_action_path(path: &str, batch: bool) -> String {
+    if batch {
+        path.replace(":embedContent", ":batchEmbedContents")
+    } else {
+        path.replace(":batchEmbedContents", ":embedContent")
+    }
 }
 
 fn build_provider_embedding_v1_url(upstream_base_url: &str, query: Option<&str>) -> Option<String> {
@@ -345,6 +395,7 @@ fn build_gemini_embedding_url(
     upstream_base_url: &str,
     model: &str,
     query: Option<&str>,
+    batch: bool,
 ) -> Option<String> {
     let trimmed_base_url = upstream_base_url
         .trim()
@@ -357,12 +408,17 @@ fn build_gemini_embedding_url(
         return None;
     }
 
-    let path = if trimmed_base_url.ends_with("/v1beta") {
-        format!("/models/{trimmed_model}:embedContent")
-    } else if trimmed_base_url.contains("/v1beta/models/") {
-        ":embedContent".to_string()
+    let action = if batch {
+        "batchEmbedContents"
     } else {
-        format!("/v1beta/models/{trimmed_model}:embedContent")
+        "embedContent"
+    };
+    let path = if trimmed_base_url.ends_with("/v1beta") {
+        format!("/models/{trimmed_model}:{action}")
+    } else if trimmed_base_url.contains("/v1beta/models/") {
+        format!(":{action}")
+    } else {
+        format!("/v1beta/models/{trimmed_model}:{action}")
     };
     build_passthrough_path_url(upstream_base_url, &path, query, &["key"])
 }
@@ -440,12 +496,13 @@ fn custom_path_template_regex() -> &'static Regex {
 mod tests {
     use super::{
         build_kiro_cross_format_upstream_url, build_transport_request_url,
-        TransportRequestUrlParams,
+        build_transport_request_url_for_request_body, TransportRequestUrlParams,
     };
     use crate::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };
+    use serde_json::json;
 
     fn sample_transport(
         provider_type: &str,
@@ -826,6 +883,82 @@ mod tests {
             )
             .as_deref(),
             Some("https://ark.volces.example/api/v3/embeddings")
+        );
+    }
+
+    #[test]
+    fn gemini_embedding_batch_body_uses_batch_endpoint() {
+        let gemini = sample_transport(
+            "gemini",
+            "gemini:embedding",
+            "https://generativelanguage.googleapis.com/v1beta",
+            None,
+        );
+        let batch_body = json!({
+            "requests": [
+                {
+                    "model": "models/gemini-embedding-001",
+                    "content": {"parts": [{"text": "alpha"}]}
+                },
+                {
+                    "model": "models/gemini-embedding-001",
+                    "content": {"parts": [{"text": "beta"}]}
+                }
+            ]
+        });
+
+        assert_eq!(
+            build_transport_request_url_for_request_body(
+                &gemini,
+                TransportRequestUrlParams {
+                    provider_api_format: "gemini:embedding",
+                    mapped_model: Some("gemini-embedding-001"),
+                    upstream_is_stream: false,
+                    request_query: Some("key=client-key&foo=bar"),
+                    kiro_api_region: None,
+                },
+                Some(&batch_body),
+            )
+            .as_deref(),
+            Some(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?foo=bar"
+            )
+        );
+    }
+
+    #[test]
+    fn gemini_embedding_custom_action_template_follows_batch_body() {
+        let gemini = sample_transport(
+            "gemini",
+            "gemini:embedding",
+            "https://generativelanguage.googleapis.com",
+            Some("/v1beta/models/{model}:{action}"),
+        );
+        let batch_body = json!({
+            "requests": [
+                {
+                    "model": "models/gemini-embedding-001",
+                    "content": {"parts": [{"text": "alpha"}]}
+                }
+            ]
+        });
+
+        assert_eq!(
+            build_transport_request_url_for_request_body(
+                &gemini,
+                TransportRequestUrlParams {
+                    provider_api_format: "gemini:embedding",
+                    mapped_model: Some("gemini-embedding-001"),
+                    upstream_is_stream: false,
+                    request_query: None,
+                    kiro_api_region: None,
+                },
+                Some(&batch_body),
+            )
+            .as_deref(),
+            Some(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents"
+            )
         );
     }
 

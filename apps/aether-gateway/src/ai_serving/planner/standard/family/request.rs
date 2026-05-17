@@ -75,15 +75,18 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         .await;
     }
     let is_kiro_claude_cli = is_kiro_claude_messages_transport(transport, provider_api_format);
-    let Some(conversion_kind) =
-        crate::ai_serving::request_conversion_kind(spec_metadata.api_format, provider_api_format)
-    else {
-        return None;
-    };
-
-    if let Some(skip_reason) = crate::ai_serving::request_conversion_transport_unsupported_reason(
+    if !crate::ai_serving::request_pair_allowed_for_transport(
         transport,
-        conversion_kind,
+        spec_metadata.api_format,
+        provider_api_format,
+    ) {
+        return None;
+    }
+
+    if let Some(skip_reason) = crate::ai_serving::request_pair_transport_unsupported_reason(
+        transport,
+        spec_metadata.api_format,
+        provider_api_format,
     ) {
         mark_skipped_local_standard_candidate(
             state,
@@ -156,7 +159,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
             planner_state,
             transport,
             candidate,
-            crate::ai_serving::request_conversion_direct_auth(transport, conversion_kind),
+            crate::ai_serving::request_pair_direct_auth(transport, provider_api_format),
             oauth_context,
         )
         .await
@@ -286,6 +289,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         &prepared_candidate.mapped_model,
         provider_api_format,
         upstream_is_stream,
+        Some(&provider_request_body),
     ) {
         Some(url) => url,
         None => {

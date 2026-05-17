@@ -254,6 +254,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         spec,
         prepared.upstream_is_stream,
         prepared.kiro_auth.as_ref(),
+        Some(&provider_request_body),
     ) else {
         mark_skipped_local_same_format_provider_candidate_with_failure_diagnostic(
             state,
