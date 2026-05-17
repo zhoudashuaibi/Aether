@@ -708,8 +708,7 @@ async function handleSubmit() {
   submitting.value = true
   try {
     // 获取包含自动计算缓存价格的最终数据
-    const finalTiers = tieredPricingEditorRef.value?.getFinalTiers()
-    const finalTieredPricing = finalTiers ? { tiers: finalTiers } : tieredPricing.value
+    const finalTieredPricing = tieredPricingEditorRef.value?.getFinalPricing() ?? tieredPricing.value
 
     // Apply billing (video) pricing into config.
     applyVideoPricingToConfig(form.value.config)

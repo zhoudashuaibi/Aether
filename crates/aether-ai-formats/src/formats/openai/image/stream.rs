@@ -816,6 +816,11 @@ fn openai_image_stream_standardized_usage(
             .dimensions
             .insert("image_size".to_string(), serde_json::json!(size));
     }
+    if let Some(quality) = image_request_quality(report_context) {
+        standardized_usage
+            .dimensions
+            .insert("image_quality".to_string(), serde_json::json!(quality));
+    }
     (standardized_usage.signal_score() > 0).then_some(standardized_usage)
 }
 
@@ -1043,6 +1048,16 @@ fn image_request_size(report_context: Option<&Value>) -> Option<String> {
     report_context
         .and_then(|value| value.get("image_request"))
         .and_then(|value| value.get("size"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn image_request_quality(report_context: Option<&Value>) -> Option<String> {
+    report_context
+        .and_then(|value| value.get("image_request"))
+        .and_then(|value| value.get("quality"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())

@@ -834,8 +834,7 @@ async function handleSubmit() {
     return
   }
 
-  const finalTiers = tieredPricingEditorRef.value?.getFinalTiers()
-  const finalTieredPricing = finalTiers ? { tiers: finalTiers } : tieredPricing.value
+  const finalTieredPricing = tieredPricingEditorRef.value?.getFinalPricing() ?? tieredPricing.value
 
   if (!finalTieredPricing?.tiers?.length) {
     showError('请配置至少一个价格阶梯')

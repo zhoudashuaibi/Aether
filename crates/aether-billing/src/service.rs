@@ -172,6 +172,14 @@ fn build_dimensions(input: &BillingUsageInput) -> BTreeMap<String, Value> {
         ),
         ("image_count".to_string(), json!(input.image_count.max(0))),
         (
+            "image_count_unmetered".to_string(),
+            json!(if input.output_tokens > 0 {
+                0
+            } else {
+                input.image_count.max(0)
+            }),
+        ),
+        (
             "total_input_context".to_string(),
             json!(total_input_context),
         ),
@@ -195,6 +203,46 @@ fn build_dimensions(input: &BillingUsageInput) -> BTreeMap<String, Value> {
             "cache_ttl_minutes".to_string(),
             json!(cache_ttl_minutes.max(0)),
         );
+    }
+    if input.image_count > 0 {
+        let image_size = input
+            .image_size
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let image_quality = input
+            .image_quality
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        if let Some(image_size) = image_size.as_ref() {
+            out.insert("image_size".to_string(), json!(image_size));
+        }
+        if let Some(image_quality) = image_quality.as_ref() {
+            out.insert("image_quality".to_string(), json!(image_quality));
+        }
+        if let (Some(image_size), Some(image_quality)) =
+            (image_size.as_ref(), image_quality.as_ref())
+        {
+            out.insert(
+                "image_price_key".to_string(),
+                json!(format!(
+                    "{}:{}",
+                    image_size.to_ascii_lowercase().replace(' ', ""),
+                    image_quality.to_ascii_lowercase()
+                )),
+            );
+        }
+    }
+    if let Some(output_format) = input
+        .image_output_format
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        out.insert("image_output_format".to_string(), json!(output_format));
     }
     out
 }
@@ -258,6 +306,9 @@ mod tests {
                     cache_creation_ephemeral_1h_tokens: 0,
                     cache_read_tokens: 100,
                     image_count: 0,
+                    image_size: None,
+                    image_quality: None,
+                    image_output_format: None,
                     cache_ttl_minutes: Some(60),
                 },
             )
@@ -285,6 +336,9 @@ mod tests {
                     cache_creation_ephemeral_1h_tokens: 0,
                     cache_read_tokens: 800,
                     image_count: 0,
+                    image_size: None,
+                    image_quality: None,
+                    image_output_format: None,
                     cache_ttl_minutes: Some(60),
                 },
             )
@@ -355,6 +409,9 @@ mod tests {
                     cache_creation_ephemeral_1h_tokens: 0,
                     cache_read_tokens: 100,
                     image_count: 0,
+                    image_size: None,
+                    image_quality: None,
+                    image_output_format: None,
                     cache_ttl_minutes: Some(5),
                 },
             )
@@ -425,6 +482,9 @@ mod tests {
                     cache_creation_ephemeral_1h_tokens: 0,
                     cache_read_tokens: 100,
                     image_count: 0,
+                    image_size: None,
+                    image_quality: None,
+                    image_output_format: None,
                     cache_ttl_minutes: Some(60),
                 },
             )

@@ -21,6 +21,8 @@ export interface PricingTier {
 /** 阶梯计费配置 */
 export interface TieredPricingConfig {
   tiers: PricingTier[]
+  image_output_prices?: Record<string, Record<string, number>> | null
+  image_output_price_default?: number | null
 }
 
 export interface Model {

@@ -137,6 +137,51 @@
       添加价格阶梯
     </Button>
 
+    <div class="rounded-lg border bg-muted/10 p-3 space-y-3">
+      <div class="flex flex-wrap items-end justify-between gap-3">
+        <Label class="text-xs font-medium">图像输出矩阵 ($/张)</Label>
+        <div class="flex items-center gap-2">
+          <Label class="text-xs text-muted-foreground">默认价</Label>
+          <Input
+            :model-value="imageOutputPriceDefault"
+            type="number"
+            step="0.001"
+            min="0"
+            class="h-8 w-24"
+            placeholder="0"
+            @update:model-value="updateImageOutputPriceDefault"
+          />
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <div class="grid grid-cols-[96px_repeat(3,minmax(0,1fr))] gap-2 text-xs text-muted-foreground">
+          <span />
+          <span>low</span>
+          <span>medium</span>
+          <span>high</span>
+        </div>
+        <div
+          v-for="size in IMAGE_OUTPUT_SIZES"
+          :key="size.value"
+          class="grid grid-cols-[96px_repeat(3,minmax(0,1fr))] gap-2 items-center"
+        >
+          <span class="text-xs text-muted-foreground">{{ size.label }}</span>
+          <Input
+            v-for="quality in IMAGE_OUTPUT_QUALITIES"
+            :key="`${size.value}-${quality}`"
+            :model-value="getImageOutputPrice(size.value, quality)"
+            type="number"
+            step="0.001"
+            min="0"
+            class="h-8"
+            placeholder="0"
+            @update:model-value="(v) => updateImageOutputPrice(size.value, quality, v)"
+          />
+        </div>
+      </div>
+    </div>
+
     <!-- 验证提示 -->
     <p
       v-if="validationError"
@@ -153,6 +198,16 @@ import { Plus, X } from 'lucide-vue-next'
 import { Button, Input, Label } from '@/components/ui'
 import type { TieredPricingConfig, PricingTier } from '@/api/endpoints/types'
 
+type ImageOutputQuality = 'low' | 'medium' | 'high'
+
+const IMAGE_OUTPUT_SIZES = [
+  { value: '1024x1024', label: '1024 x 1024' },
+  { value: '1536x1024', label: '1536 x 1024' },
+  { value: '1024x1536', label: '1024 x 1536' },
+] as const
+
+const IMAGE_OUTPUT_QUALITIES: ImageOutputQuality[] = ['low', 'medium', 'high']
+
 const props = defineProps<{
   modelValue?: TieredPricingConfig | null
   showCache1h?: boolean
@@ -164,6 +219,8 @@ const emit = defineEmits<{
 
 // 本地状态
 const localTiers = ref<PricingTier[]>([])
+const imageOutputPrices = ref<Record<string, Record<string, number | undefined>>>({})
+const imageOutputPriceDefault = ref<string>('')
 
 // 跟踪每个阶梯的缓存价格是否被手动设置
 const cacheManuallySet = reactive<Record<number, { creation: boolean; read: boolean; cache1h: boolean }>>({})
@@ -188,6 +245,10 @@ watch(
   (newValue) => {
     if (newValue?.tiers) {
       localTiers.value = newValue.tiers.map(t => ({ ...t }))
+      imageOutputPrices.value = cloneImageOutputPrices(newValue.image_output_prices)
+      imageOutputPriceDefault.value = newValue.image_output_price_default != null
+        ? String(newValue.image_output_price_default)
+        : ''
       // 如果已有缓存价格，标记为手动设置
       newValue.tiers.forEach((t, i) => {
         const has1hCache = t.cache_ttl_pricing?.some(c => c.ttl_minutes === 60) ?? false
@@ -203,6 +264,8 @@ watch(
         input_price_per_1m: 0,
         output_price_per_1m: 0,
       }]
+      imageOutputPrices.value = {}
+      imageOutputPriceDefault.value = ''
       cacheManuallySet[0] = { creation: false, read: false, cache1h: false }
     }
   },
@@ -367,7 +430,7 @@ function syncToParent() {
     return tier
   })
 
-  emit('update:modelValue', { tiers })
+  emit('update:modelValue', buildPricingConfig(tiers))
 }
 
 // 获取最终提交的数据（包含自动计算的缓存价格）
@@ -406,10 +469,89 @@ function getFinalTiers(): PricingTier[] {
   })
 }
 
+function getFinalPricing(): TieredPricingConfig {
+  return buildPricingConfig(getFinalTiers())
+}
+
 // 暴露给父组件调用
 defineExpose({
   getFinalTiers,
+  getFinalPricing,
 })
+
+function buildPricingConfig(tiers: PricingTier[]): TieredPricingConfig {
+  const config: TieredPricingConfig = { tiers }
+  const matrix = normalizedImageOutputPrices()
+  if (Object.keys(matrix).length > 0) {
+    config.image_output_prices = matrix
+  }
+  const defaultPrice = parseOptionalFloat(imageOutputPriceDefault.value)
+  if (defaultPrice != null) {
+    config.image_output_price_default = defaultPrice
+  }
+  return config
+}
+
+function cloneImageOutputPrices(value: TieredPricingConfig['image_output_prices']): Record<string, Record<string, number | undefined>> {
+  const out: Record<string, Record<string, number | undefined>> = {}
+  if (!value || typeof value !== 'object') return out
+  for (const [size, prices] of Object.entries(value)) {
+    if (!prices || typeof prices !== 'object') continue
+    for (const quality of IMAGE_OUTPUT_QUALITIES) {
+      const price = (prices as Record<string, unknown>)[quality]
+      if (typeof price === 'number' && Number.isFinite(price)) {
+        out[size] = { ...(out[size] || {}), [quality]: price }
+      }
+    }
+  }
+  return out
+}
+
+function normalizedImageOutputPrices(): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {}
+  for (const [size, prices] of Object.entries(imageOutputPrices.value)) {
+    for (const quality of IMAGE_OUTPUT_QUALITIES) {
+      const price = prices[quality]
+      if (price != null && Number.isFinite(price)) {
+        out[size] = { ...(out[size] || {}), [quality]: price }
+      }
+    }
+  }
+  return out
+}
+
+function parseOptionalFloat(value: string | number): number | null {
+  if (value === '' || value === null || value === undefined) return null
+  const number = typeof value === 'string' ? parseFloat(value) : value
+  return Number.isFinite(number) ? number : null
+}
+
+function getImageOutputPrice(size: string, quality: ImageOutputQuality): string | number {
+  return imageOutputPrices.value[size]?.[quality] ?? ''
+}
+
+function updateImageOutputPrice(size: string, quality: ImageOutputQuality, value: string | number) {
+  const price = parseOptionalFloat(value)
+  const current = { ...(imageOutputPrices.value[size] || {}) }
+  if (price == null) {
+    delete current[quality]
+  } else {
+    current[quality] = price
+  }
+  if (Object.values(current).some(v => v != null)) {
+    imageOutputPrices.value = { ...imageOutputPrices.value, [size]: current }
+  } else {
+    const next = { ...imageOutputPrices.value }
+    delete next[size]
+    imageOutputPrices.value = next
+  }
+  syncToParent()
+}
+
+function updateImageOutputPriceDefault(value: string | number) {
+  imageOutputPriceDefault.value = String(value ?? '')
+  syncToParent()
+}
 
 function parseFloatInput(value: string | number): number {
   const num = typeof value === 'string' ? parseFloat(value) : value

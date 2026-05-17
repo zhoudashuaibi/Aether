@@ -169,6 +169,9 @@ fn calculate_billing_computation(
             .unwrap_or_default() as i64,
         cache_read_tokens: event.data.cache_read_input_tokens.unwrap_or_default() as i64,
         image_count,
+        image_size: usage_event_dimension_string(&event.data, "image_size"),
+        image_quality: usage_event_dimension_string(&event.data, "image_quality"),
+        image_output_format: usage_event_dimension_string(&event.data, "image_output_format"),
         cache_ttl_minutes: pricing.provider_api_key_cache_ttl_minutes,
     };
 
@@ -198,6 +201,37 @@ fn usage_event_image_count(data: &aether_usage_runtime::UsageEventData) -> Optio
             )
         })
         .filter(|value| *value > 0)
+}
+
+fn usage_event_dimension_string(
+    data: &aether_usage_runtime::UsageEventData,
+    dimension_key: &str,
+) -> Option<String> {
+    metadata_dimension_string(data.request_metadata.as_ref(), "dimensions", dimension_key).or_else(
+        || {
+            metadata_dimension_string(
+                data.request_metadata.as_ref(),
+                "billing_dimensions",
+                dimension_key,
+            )
+        },
+    )
+}
+
+fn metadata_dimension_string(
+    metadata: Option<&Value>,
+    bag_key: &str,
+    dimension_key: &str,
+) -> Option<String> {
+    metadata
+        .and_then(Value::as_object)
+        .and_then(|object| object.get(bag_key))
+        .and_then(Value::as_object)
+        .and_then(|object| object.get(dimension_key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn metadata_dimension_i64(
@@ -521,6 +555,100 @@ mod tests {
                 .and_then(|value| value.get("effective_task_type"))
                 .and_then(Value::as_str),
             Some("image")
+        );
+    }
+
+    #[tokio::test]
+    async fn image_usage_uses_configured_output_price_matrix() {
+        let lookup = TestLookup {
+            name_context: Some(
+                StoredBillingModelContext::new(
+                    "provider-1".to_string(),
+                    Some("pay_as_you_go".to_string()),
+                    Some("key-1".to_string()),
+                    None,
+                    None,
+                    "global-image-1".to_string(),
+                    "gpt-image-2".to_string(),
+                    None,
+                    None,
+                    Some(json!({
+                        "tiers": [{
+                            "up_to": null,
+                            "input_price_per_1m": 5.0,
+                            "output_price_per_1m": 30.0,
+                            "cache_read_price_per_1m": 1.25
+                        }],
+                        "image_output_price_default": 0.01,
+                        "image_output_prices": {
+                            "1024x1024": {"low": 0.006, "medium": 0.053, "high": 0.211},
+                            "1536x1024": {"low": 0.005, "medium": 0.041, "high": 0.165},
+                            "1024x1536": {"low": 0.005, "medium": 0.041, "high": 0.165}
+                        }
+                    })),
+                    Some("model-image-1".to_string()),
+                    Some("gpt-image-2".to_string()),
+                    None,
+                    None,
+                    None,
+                )
+                .expect("billing context should build"),
+            ),
+            model_id_context: None,
+        };
+        let mut event = UsageEvent::new(
+            UsageEventType::Completed,
+            "req-image-billing-matrix-1",
+            UsageEventData {
+                provider_name: "OpenAI Image".to_string(),
+                model: "gpt-image-2".to_string(),
+                provider_id: Some("provider-1".to_string()),
+                provider_api_key_id: Some("key-1".to_string()),
+                request_type: Some("chat".to_string()),
+                api_format: Some("openai:chat".to_string()),
+                endpoint_api_format: Some("openai:image".to_string()),
+                request_metadata: Some(json!({
+                    "dimensions": {
+                        "image_count": 2,
+                        "image_size": "1536x1024",
+                        "image_quality": "medium",
+                        "image_output_format": "png"
+                    }
+                })),
+                status_code: Some(200),
+                ..UsageEventData::default()
+            },
+        );
+
+        enrich_usage_event_with_billing(&lookup, &mut event)
+            .await
+            .expect("billing should succeed");
+
+        assert_eq!(event.data.total_cost_usd, Some(0.082));
+        assert_eq!(event.data.actual_total_cost_usd, Some(0.082));
+        let metadata = event.data.request_metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata
+                .get("billing_dimensions")
+                .and_then(|value| value.get("image_price_key"))
+                .and_then(Value::as_str),
+            Some("1536x1024:medium")
+        );
+        assert_eq!(
+            metadata
+                .get("billing_snapshot")
+                .and_then(|value| value.get("resolved_variables"))
+                .and_then(|value| value.get("image_output_price_per_image"))
+                .and_then(Value::as_f64),
+            Some(0.041)
+        );
+        assert_eq!(
+            metadata
+                .get("billing_snapshot")
+                .and_then(|value| value.get("cost_breakdown"))
+                .and_then(|value| value.get("image_output_cost"))
+                .and_then(Value::as_f64),
+            Some(0.082)
         );
     }
 

@@ -471,6 +471,11 @@ fn openai_image_standardized_usage(
             .dimensions
             .insert("image_size".to_string(), json!(size));
     }
+    if let Some(quality) = image_request_quality(report_context) {
+        standardized_usage
+            .dimensions
+            .insert("image_quality".to_string(), json!(quality));
+    }
     (standardized_usage.signal_score() > 0).then_some(standardized_usage)
 }
 
@@ -540,6 +545,16 @@ fn image_request_size(report_context: Option<&Value>) -> Option<String> {
     report_context
         .and_then(|value| value.get("image_request"))
         .and_then(|value| value.get("size"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn image_request_quality(report_context: Option<&Value>) -> Option<String> {
+    report_context
+        .and_then(|value| value.get("image_request"))
+        .and_then(|value| value.get("quality"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -999,7 +1014,8 @@ mod tests {
             "image_request": {
                 "operation": "generate",
                 "output_format": "png",
-                "size": "1024x1024"
+                "size": "1024x1024",
+                "quality": "medium"
             }
         });
         let outcome = maybe_bridge_standard_sync_json_to_stream(
@@ -1044,6 +1060,10 @@ mod tests {
         assert_eq!(
             usage.dimensions.get("image_size"),
             Some(&json!("1024x1024"))
+        );
+        assert_eq!(
+            usage.dimensions.get("image_quality"),
+            Some(&json!("medium"))
         );
     }
 

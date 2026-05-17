@@ -913,7 +913,7 @@ fn build_openai_image_provider_body_from_openai_chat_body(
         "operation".to_string(),
         Value::String(operation.to_string()),
     );
-    for key in ["output_format", "partial_images"] {
+    for key in ["output_format", "partial_images", "size", "quality"] {
         if let Some(value) = tool.get(key) {
             summary.insert(key.to_string(), value.clone());
         }
@@ -943,6 +943,12 @@ fn build_chatgpt_web_image_provider_body_from_openai_chat_body(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("png");
+    let quality = body_json
+        .get("quality")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("medium");
     let model = body_json
         .get("model")
         .and_then(Value::as_str)
@@ -970,6 +976,8 @@ fn build_chatgpt_web_image_provider_body_from_openai_chat_body(
     let summary = json!({
         "operation": operation,
         "output_format": output_format,
+        "size": size,
+        "quality": quality,
     });
     Some((body, summary))
 }

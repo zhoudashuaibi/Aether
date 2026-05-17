@@ -978,6 +978,7 @@ mod tests {
         let mut report_context = report_context("openai:image", "openai:chat");
         report_context["image_request"] = json!({
             "size": "1024x1024",
+            "quality": "medium",
             "output_format": "png",
         });
         let mut observer = StreamingStandardTerminalObserver::default();
@@ -1047,6 +1048,10 @@ mod tests {
         assert_eq!(
             usage.dimensions.get("image_output_format"),
             Some(&json!("png"))
+        );
+        assert_eq!(
+            usage.dimensions.get("image_quality"),
+            Some(&json!("medium"))
         );
     }
 }

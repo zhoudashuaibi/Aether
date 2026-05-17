@@ -821,6 +821,7 @@ fn build_chatgpt_web_image_provider_body_from_openai_responses_body(
     let size = image_option_string(tool.as_ref(), object, "size").unwrap_or("1024x1024");
     let output_format =
         image_option_string(tool.as_ref(), object, "output_format").unwrap_or("png");
+    let quality = image_option_string(tool.as_ref(), object, "quality").unwrap_or("medium");
     let model = object
         .get("model")
         .and_then(Value::as_str)
@@ -845,6 +846,8 @@ fn build_chatgpt_web_image_provider_body_from_openai_responses_body(
     let summary = json!({
         "operation": operation,
         "output_format": output_format,
+        "size": size,
+        "quality": quality,
     });
     Some((body, summary))
 }
