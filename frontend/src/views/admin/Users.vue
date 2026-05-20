@@ -843,6 +843,7 @@
 
     <UserGroupsDialog
       :open="showUserGroupsDialog"
+      :users-version="userOptionsVersion"
       @close="showUserGroupsDialog = false"
       @changed="handleUserGroupsChanged"
     />
@@ -1572,6 +1573,7 @@ const showWalletActionDialogState = ref(false)
 const walletActionTarget = ref<{ user: User; wallet: AdminWallet } | null>(null)
 const showUserBatchDialog = ref(false)
 const showUserGroupsDialog = ref(false)
+const userOptionsVersion = ref(0)
 
 const searchQuery = ref('')
 const filterRole = ref<'all' | User['role']>('all')
@@ -1596,20 +1598,7 @@ const USERS_PAGE_CACHE_TTL_MS = 10 * 1000
 const USER_WALLETS_CACHE_TTL_MS = 10 * 1000
 let userWalletsRequestId = 0
 
-const filteredUsers = computed(() => {
-  let filtered = [...usersStore.users]
-
-  // 当前页仍按原有视觉规则排序；筛选和分页由后端处理，避免只搜索首批 100 个用户。
-  filtered.sort((a, b) => {
-    const roleRank = (role: string) => role === 'admin' ? 0 : role === 'audit_admin' ? 1 : 2
-    const roleDiff = roleRank(a.role) - roleRank(b.role)
-    if (roleDiff !== 0) return roleDiff
-    // 同角色按创建时间倒序（新用户在前）
-    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  })
-
-  return filtered
-})
+const filteredUsers = computed(() => usersStore.users)
 
 const paginatedUsers = computed(() => filteredUsers.value)
 
@@ -1729,6 +1718,10 @@ function openUserBatchDialog(): void {
 async function handleUserBatchCompleted(_result: UserBatchActionResponse): Promise<void> {
   await refreshUsers()
   resetBatchSelection(true)
+}
+
+function invalidateUserOptions(): void {
+  userOptionsVersion.value += 1
 }
 
 function formatDate(dateString: string) {
@@ -1896,6 +1889,8 @@ async function toggleUserStatus(user: User) {
 
   try {
     await usersStore.updateUser(user.id, { is_active: !user.is_active })
+    invalidateUserOptions()
+    await refreshUsers()
     success(`用户已${action}`)
   } catch (err: unknown) {
     error(parseApiError(err, '未知错误'), `${action}用户失败`)
@@ -1946,6 +1941,7 @@ async function handleUserFormSubmit(data: UserFormData & { password?: string; un
         updateData.password = data.password
       }
       await usersStore.updateUser(data.id, updateData)
+      invalidateUserOptions()
       success('用户信息已更新')
     } else {
       // 创建用户
@@ -1963,6 +1959,7 @@ async function handleUserFormSubmit(data: UserFormData & { password?: string; un
       if (data.is_active === false && newUser) {
         await usersStore.updateUser(newUser.id, { is_active: false })
       }
+      invalidateUserOptions()
       success('用户创建成功')
     }
     closeUserFormDialog()
@@ -2270,6 +2267,7 @@ async function deleteUser(user: User) {
 
   try {
     await usersStore.deleteUser(user.id)
+    invalidateUserOptions()
     if (usersStore.users.length === 0 && currentPage.value > 1) {
       currentPage.value -= 1
     }

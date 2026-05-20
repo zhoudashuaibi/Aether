@@ -274,6 +274,7 @@ import type {
 
 const props = defineProps<{
   open: boolean
+  usersVersion: number
 }>()
 
 const emit = defineEmits<{
@@ -299,6 +300,7 @@ const editingGroupId = ref<string | null>(null)
 const memberUserIds = ref<string[]>([])
 const USER_OPTIONS_CACHE_TTL_MS = 30 * 1000
 let dialogUsersLoadedAt = 0
+let dialogUsersLoadedVersion = -1
 
 const form = ref({
   name: '',
@@ -361,12 +363,17 @@ async function loadDialogData(): Promise<void> {
 
 async function ensureDialogUsers(): Promise<void> {
   const now = Date.now()
-  if (dialogUsersLoadedAt > 0 && now - dialogUsersLoadedAt < USER_OPTIONS_CACHE_TTL_MS) {
+  if (
+    dialogUsersLoadedVersion === props.usersVersion
+    && dialogUsersLoadedAt > 0
+    && now - dialogUsersLoadedAt < USER_OPTIONS_CACHE_TTL_MS
+  ) {
     return
   }
 
   dialogUsers.value = await usersStore.listAllUsers({ cacheTtlMs: USER_OPTIONS_CACHE_TTL_MS })
   dialogUsersLoadedAt = Date.now()
+  dialogUsersLoadedVersion = props.usersVersion
 }
 
 async function selectGroup(groupId: string): Promise<void> {
