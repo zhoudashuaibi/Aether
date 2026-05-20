@@ -148,6 +148,7 @@ export interface UserApiKeyExport {
   allowed_providers?: string[] | null
   allowed_api_formats?: string[] | null
   allowed_models?: string[] | null
+  ip_rules?: string[] | null
   rate_limit?: number | null  // legacy/null 兼容；1.3+ standalone null = 跟随系统默认
   concurrent_limit?: number | null
   force_capabilities?: Record<string, boolean>
@@ -497,6 +498,7 @@ export interface AdminApiKey {
   allowed_providers?: string[] | null  // 允许的提供商列表
   allowed_api_formats?: string[] | null  // 允许的 API 格式列表
   allowed_models?: string[] | null  // 允许的模型列表
+  ip_rules?: string[] | null  // IP 限制规则
   feature_settings?: Record<string, unknown> | null
   auto_delete_on_expiry?: boolean  // 过期后是否自动删除
   last_used_at?: string
@@ -511,6 +513,7 @@ export interface CreateStandaloneApiKeyRequest {
   allowed_providers?: string[] | null
   allowed_api_formats?: string[] | null
   allowed_models?: string[] | null
+  ip_rules?: string[] | null
   rate_limit?: number | null  // null = 跟随系统默认，0 = 不限制
   concurrent_limit?: number | null  // null = 跟随系统默认，0 = 不限制
   expires_at?: string | null  // RFC3339 时间，null = 永不过期

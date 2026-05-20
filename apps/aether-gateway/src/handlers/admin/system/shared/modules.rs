@@ -46,7 +46,7 @@ pub(crate) const ADMIN_MODULE_DEFINITIONS: &[AdminModuleDefinition] = &[
     AdminModuleDefinition {
         name: "management_tokens",
         display_name: "访问令牌",
-        description: "管理 API 访问令牌，支持细粒度权限控制和 IP 白名单",
+        description: "管理 API 访问令牌，支持细粒度权限控制和 IP 限制",
         category: "security",
         env_key: "MANAGEMENT_TOKENS_AVAILABLE",
         default_available: true,

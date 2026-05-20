@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     allowed_models TEXT,
     allowed_providers TEXT,
     allowed_api_formats TEXT,
-    allowed_ips TEXT,
+    ip_rules TEXT,
     rate_limit INTEGER DEFAULT 100,
     concurrent_limit INTEGER,
     force_capabilities TEXT,

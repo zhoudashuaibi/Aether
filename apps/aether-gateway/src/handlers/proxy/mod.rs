@@ -46,8 +46,8 @@ use crate::frontdoor_loop_guard::{
     frontdoor_self_loop_public_ai_path, request_has_execution_runtime_loop_guard,
 };
 use crate::handlers::shared::{
-    build_admin_proxy_auth_required_response, build_unhandled_admin_proxy_response,
-    local_proxy_route_requires_buffered_body, request_enables_control_execute,
+    build_admin_proxy_auth_required_response, build_unhandled_admin_proxy_response, ip_rules_allow,
+    json_ip_rules_allow, local_proxy_route_requires_buffered_body, request_enables_control_execute,
     should_strip_forwarded_provider_credential_header, should_strip_forwarded_trusted_admin_header,
 };
 use crate::headers::{
@@ -197,69 +197,11 @@ fn hash_management_token(value: &str) -> String {
 }
 
 fn remote_ip_allowed(allowed_ips: Option<&serde_json::Value>, remote_ip: std::net::IpAddr) -> bool {
-    let Some(allowed_ips) = allowed_ips else {
-        return true;
-    };
-    if allowed_ips.is_null() {
-        return true;
-    }
-    let Some(items) = allowed_ips.as_array() else {
-        return false;
-    };
-    if items.is_empty() {
-        return false;
-    }
-    items
-        .iter()
-        .filter_map(serde_json::Value::as_str)
-        .any(|value| ip_or_cidr_matches(value, remote_ip))
+    json_ip_rules_allow(allowed_ips, remote_ip)
 }
 
-fn api_key_remote_ip_allowed(allowed_ips: Option<&[String]>, remote_ip: std::net::IpAddr) -> bool {
-    let Some(allowed_ips) = allowed_ips else {
-        return true;
-    };
-    if allowed_ips.is_empty() {
-        return false;
-    }
-    allowed_ips
-        .iter()
-        .any(|value| ip_or_cidr_matches(value, remote_ip))
-}
-
-fn ip_or_cidr_matches(pattern: &str, remote_ip: std::net::IpAddr) -> bool {
-    let pattern = pattern.trim();
-    if pattern.is_empty() {
-        return false;
-    }
-    if let Ok(ip) = pattern.parse::<std::net::IpAddr>() {
-        return ip == remote_ip;
-    }
-    let Some((network, prefix)) = pattern.split_once('/') else {
-        return false;
-    };
-    let Ok(prefix) = prefix.trim().parse::<u8>() else {
-        return false;
-    };
-    match (network.trim().parse::<std::net::IpAddr>(), remote_ip) {
-        (Ok(std::net::IpAddr::V4(network)), std::net::IpAddr::V4(remote)) if prefix <= 32 => {
-            let mask = if prefix == 0 {
-                0
-            } else {
-                u32::MAX << (32 - prefix)
-            };
-            (u32::from(network) & mask) == (u32::from(remote) & mask)
-        }
-        (Ok(std::net::IpAddr::V6(network)), std::net::IpAddr::V6(remote)) if prefix <= 128 => {
-            let mask = if prefix == 0 {
-                0
-            } else {
-                u128::MAX << (128 - prefix)
-            };
-            (u128::from(network) & mask) == (u128::from(remote) & mask)
-        }
-        _ => false,
-    }
+fn api_key_remote_ip_allowed(ip_rules: Option<&[String]>, remote_ip: std::net::IpAddr) -> bool {
+    ip_rules_allow(ip_rules, remote_ip)
 }
 
 async fn maybe_promote_management_token_admin_principal(
@@ -1003,7 +945,7 @@ pub(crate) async fn proxy_request(
         .as_ref()
         .and_then(|decision| decision.auth_context.as_ref())
     {
-        if !api_key_remote_ip_allowed(auth_context.allowed_ips.as_deref(), remote_addr.ip()) {
+        if !api_key_remote_ip_allowed(auth_context.ip_rules.as_deref(), remote_addr.ip()) {
             let rejection = crate::control::GatewayLocalAuthRejection::IpNotAllowed {
                 remote_ip: remote_addr.ip().to_string(),
             };
@@ -2052,20 +1994,24 @@ mod tests {
     }
 
     #[test]
-    fn api_key_remote_ip_matches_exact_ip_and_cidr() {
-        let allowed_ips = vec!["198.51.100.1".to_string(), "203.0.113.0/24".to_string()];
+    fn api_key_remote_ip_applies_ip_rules() {
+        let ip_rules = vec![
+            "198.51.100.1".to_string(),
+            "203.0.113.*".to_string(),
+            "!203.0.113.13".to_string(),
+        ];
 
         assert!(api_key_remote_ip_allowed(
-            Some(&allowed_ips),
+            Some(&ip_rules),
             "198.51.100.1".parse().expect("valid ip"),
         ));
         assert!(api_key_remote_ip_allowed(
-            Some(&allowed_ips),
+            Some(&ip_rules),
             "203.0.113.42".parse().expect("valid ip"),
         ));
         assert!(!api_key_remote_ip_allowed(
-            Some(&allowed_ips),
-            "203.0.114.42".parse().expect("valid ip"),
+            Some(&ip_rules),
+            "203.0.113.13".parse().expect("valid ip"),
         ));
     }
 

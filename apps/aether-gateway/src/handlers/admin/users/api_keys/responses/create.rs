@@ -1,7 +1,7 @@
 use super::super::super::{
     build_admin_users_bad_request_response, build_admin_users_data_unavailable_response,
     build_admin_users_read_only_response, normalize_admin_feature_settings,
-    normalize_admin_user_allowed_ips, AdminCreateUserApiKeyRequest,
+    normalize_admin_user_ip_rules, AdminCreateUserApiKeyRequest,
 };
 use super::super::helpers::{
     attach_audit_response, default_admin_user_api_key_name, format_optional_unix_secs_iso8601,
@@ -71,7 +71,7 @@ pub(crate) async fn build_admin_create_user_api_key_response(
     {
         return Ok((
             http::StatusCode::BAD_REQUEST,
-            Json(json!({ "detail": "当前仅支持 name、rate_limit、concurrent_limit、allowed_providers、allowed_ips 字段" })),
+            Json(json!({ "detail": "当前仅支持 name、rate_limit、concurrent_limit、allowed_providers、ip_rules 字段" })),
         )
             .into_response());
     }
@@ -107,7 +107,7 @@ pub(crate) async fn build_admin_create_user_api_key_response(
                 .into_response());
         }
     };
-    let allowed_ips = match normalize_admin_user_allowed_ips(payload.allowed_ips) {
+    let ip_rules = match normalize_admin_user_ip_rules(payload.ip_rules) {
         Ok(value) => value,
         Err(detail) => {
             return Ok((
@@ -156,7 +156,7 @@ pub(crate) async fn build_admin_create_user_api_key_response(
             allowed_providers: None,
             allowed_api_formats: None,
             allowed_models: None,
-            allowed_ips,
+            ip_rules,
             rate_limit,
             concurrent_limit,
             force_capabilities: None,
@@ -207,7 +207,7 @@ pub(crate) async fn build_admin_create_user_api_key_response(
             "key_display": masked_user_api_key_display(state, created.key_encrypted.as_deref()),
             "rate_limit": created.rate_limit,
             "concurrent_limit": created.concurrent_limit,
-            "allowed_ips": created.allowed_ips,
+            "ip_rules": created.ip_rules,
             "expires_at": format_optional_unix_secs_iso8601(created.expires_at_unix_secs),
             "last_used_at": format_optional_unix_secs_iso8601(created.last_used_at_unix_secs),
             "created_at": format_optional_unix_secs_iso8601(created.created_at_unix_secs),

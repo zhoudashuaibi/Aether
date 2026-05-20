@@ -49,7 +49,7 @@ pub(crate) struct GatewayControlAuthContext {
     #[serde(skip)]
     pub(crate) allowed_models: Option<Vec<String>>,
     #[serde(skip)]
-    pub(crate) allowed_ips: Option<Vec<String>>,
+    pub(crate) ip_rules: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -586,7 +586,7 @@ pub(super) async fn resolve_data_backed_auth_context(
                     admin_bypass_limits: false,
                     local_rejection: Some(GatewayLocalAuthRejection::InvalidApiKey),
                     allowed_models: None,
-                    allowed_ips: None,
+                    ip_rules: None,
                 }));
             };
 
@@ -644,7 +644,7 @@ async fn resolve_trusted_auth_context(
             admin_bypass_limits: false,
             local_rejection: Some(GatewayLocalAuthRejection::InvalidApiKey),
             allowed_models: None,
-            allowed_ips: None,
+            ip_rules: None,
         }));
     };
 
@@ -735,7 +735,7 @@ async fn build_data_backed_auth_context(
             && !snapshot.api_key_is_standalone,
         local_rejection,
         allowed_models,
-        allowed_ips: snapshot.api_key_allowed_ips,
+        ip_rules: snapshot.api_key_ip_rules,
     }
 }
 

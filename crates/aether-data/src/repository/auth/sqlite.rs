@@ -35,7 +35,7 @@ SELECT
   api_keys.allowed_providers AS api_key_allowed_providers,
   api_keys.allowed_api_formats AS api_key_allowed_api_formats,
   api_keys.allowed_models AS api_key_allowed_models,
-  api_keys.allowed_ips AS api_key_allowed_ips
+  api_keys.ip_rules AS api_key_ip_rules
 FROM api_keys
 JOIN users ON users.id = api_keys.user_id
 "#;
@@ -50,7 +50,7 @@ SELECT
   api_keys.allowed_providers,
   api_keys.allowed_api_formats,
   api_keys.allowed_models,
-  api_keys.allowed_ips,
+  api_keys.ip_rules,
   api_keys.rate_limit,
   api_keys.concurrent_limit,
   api_keys.force_capabilities,
@@ -114,7 +114,7 @@ impl SqliteAuthApiKeyReadRepository {
             r#"
 INSERT INTO api_keys (
   id, user_id, key_hash, key_encrypted, name, allowed_providers,
-  allowed_api_formats, allowed_models, allowed_ips, rate_limit, concurrent_limit,
+  allowed_api_formats, allowed_models, ip_rules, rate_limit, concurrent_limit,
   force_capabilities, feature_settings, is_active, expires_at, auto_delete_on_expiry,
   total_requests, total_tokens, total_cost_usd, is_standalone,
   created_at, updated_at
@@ -140,8 +140,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "api_keys.allowed_models",
         )?)
         .bind(json_string_from_string_list(
-            record.allowed_ips.as_ref(),
-            "api_keys.allowed_ips",
+            record.ip_rules.as_ref(),
+            "api_keys.ip_rules",
         )?)
         .bind(record.rate_limit)
         .bind(record.concurrent_limit)
@@ -181,7 +181,7 @@ struct CreateApiKeyInsertRecord {
     allowed_providers: Option<Vec<String>>,
     allowed_api_formats: Option<Vec<String>>,
     allowed_models: Option<Vec<String>>,
-    allowed_ips: Option<Vec<String>>,
+    ip_rules: Option<Vec<String>>,
     rate_limit: Option<i32>,
     concurrent_limit: Option<i32>,
     force_capabilities: Option<serde_json::Value>,
@@ -424,7 +424,7 @@ WHERE id = ?
             allowed_providers: record.allowed_providers,
             allowed_api_formats: record.allowed_api_formats,
             allowed_models: record.allowed_models,
-            allowed_ips: record.allowed_ips,
+            ip_rules: record.ip_rules,
             rate_limit: Some(record.rate_limit),
             concurrent_limit: record.concurrent_limit,
             force_capabilities: record.force_capabilities,
@@ -452,7 +452,7 @@ WHERE id = ?
             allowed_providers: record.allowed_providers,
             allowed_api_formats: record.allowed_api_formats,
             allowed_models: record.allowed_models,
-            allowed_ips: record.allowed_ips,
+            ip_rules: record.ip_rules,
             rate_limit: record.rate_limit,
             concurrent_limit: record.concurrent_limit,
             force_capabilities: record.force_capabilities,
@@ -478,7 +478,7 @@ UPDATE api_keys
 SET name = COALESCE(?, name),
     rate_limit = COALESCE(?, rate_limit),
     concurrent_limit = COALESCE(?, concurrent_limit),
-    allowed_ips = CASE WHEN ? THEN ? ELSE allowed_ips END,
+    ip_rules = CASE WHEN ? THEN ? ELSE ip_rules END,
     updated_at = ?
 WHERE id = ?
   AND user_id = ?
@@ -488,10 +488,10 @@ WHERE id = ?
         .bind(record.name.as_deref())
         .bind(record.rate_limit)
         .bind(record.concurrent_limit)
-        .bind(record.allowed_ips.is_some())
+        .bind(record.ip_rules.is_some())
         .bind(json_string_from_nested_string_list(
-            &record.allowed_ips,
-            "api_keys.allowed_ips",
+            &record.ip_rules,
+            "api_keys.ip_rules",
         )?)
         .bind(now)
         .bind(&record.api_key_id)
@@ -516,7 +516,7 @@ SET name = COALESCE(?, name),
     allowed_providers = CASE WHEN ? THEN ? ELSE allowed_providers END,
     allowed_api_formats = CASE WHEN ? THEN ? ELSE allowed_api_formats END,
     allowed_models = CASE WHEN ? THEN ? ELSE allowed_models END,
-    allowed_ips = CASE WHEN ? THEN ? ELSE allowed_ips END,
+    ip_rules = CASE WHEN ? THEN ? ELSE ip_rules END,
     expires_at = CASE WHEN ? THEN ? ELSE expires_at END,
     auto_delete_on_expiry = CASE WHEN ? THEN ? ELSE auto_delete_on_expiry END,
     updated_at = ?
@@ -544,10 +544,10 @@ WHERE id = ?
             &record.allowed_models,
             "api_keys.allowed_models",
         )?)
-        .bind(record.allowed_ips.is_some())
+        .bind(record.ip_rules.is_some())
         .bind(json_string_from_nested_string_list(
-            &record.allowed_ips,
-            "api_keys.allowed_ips",
+            &record.ip_rules,
+            "api_keys.ip_rules",
         )?)
         .bind(record.expires_at_present)
         .bind(optional_i64_from_u64(
@@ -944,9 +944,9 @@ fn map_auth_api_key_snapshot_row(
             "api_keys.allowed_models",
         )?,
     )?
-    .with_api_key_allowed_ips(optional_json_from_string(
-        row.try_get("api_key_allowed_ips").map_sql_err()?,
-        "api_keys.allowed_ips",
+    .with_api_key_ip_rules(optional_json_from_string(
+        row.try_get("api_key_ip_rules").map_sql_err()?,
+        "api_keys.ip_rules",
     )?)?;
     Ok(snapshot.with_user_rate_limit(row.try_get("user_rate_limit").map_sql_err()?))
 }
@@ -991,9 +991,9 @@ fn map_auth_api_key_export_row(
         row.try_get("is_standalone").map_sql_err()?,
     )
     .and_then(|record| {
-        record.with_allowed_ips(optional_json_from_string(
-            row.try_get("allowed_ips").map_sql_err()?,
-            "api_keys.allowed_ips",
+        record.with_ip_rules(optional_json_from_string(
+            row.try_get("ip_rules").map_sql_err()?,
+            "api_keys.ip_rules",
         )?)
     })
     .map(|record| record.with_feature_settings(feature_settings))
@@ -1112,7 +1112,7 @@ mod tests {
                 allowed_providers: Some(vec!["openai".to_string()]),
                 allowed_api_formats: Some(vec!["openai:chat".to_string()]),
                 allowed_models: Some(vec!["gpt-4.1".to_string()]),
-                allowed_ips: Some(vec!["203.0.113.10".to_string()]),
+                ip_rules: Some(vec!["203.0.113.10".to_string()]),
                 rate_limit: 100,
                 concurrent_limit: Some(5),
                 force_capabilities: Some(json!({"cache": true})),
@@ -1136,7 +1136,7 @@ mod tests {
                 name: Some("Updated User".to_string()),
                 rate_limit: Some(150),
                 concurrent_limit: Some(6),
-                allowed_ips: Some(Some(vec!["10.0.0.0/24".to_string()])),
+                ip_rules: Some(Some(vec!["10.0.0.0/24".to_string()])),
             })
             .await
             .expect("user key should update")
@@ -1212,7 +1212,7 @@ mod tests {
                 allowed_providers: Some(vec!["openai".to_string()]),
                 allowed_api_formats: None,
                 allowed_models: None,
-                allowed_ips: None,
+                ip_rules: None,
                 rate_limit: None,
                 concurrent_limit: Some(2),
                 force_capabilities: None,
@@ -1239,7 +1239,7 @@ mod tests {
                 allowed_providers: Some(None),
                 allowed_api_formats: Some(Some(vec!["openai:responses".to_string()])),
                 allowed_models: Some(Some(vec!["gpt-4.1-mini".to_string()])),
-                allowed_ips: None,
+                ip_rules: None,
                 expires_at_present: true,
                 expires_at_unix_secs: Some(2_100_000_000),
                 auto_delete_on_expiry_present: true,

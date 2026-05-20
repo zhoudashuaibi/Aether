@@ -14,7 +14,7 @@ use crate::handlers::admin::system::shared::configs::apply_admin_system_config_u
 use crate::handlers::admin::users::{
     hash_admin_user_api_key, normalize_admin_feature_settings, normalize_admin_list_policy_mode,
     normalize_admin_rate_limit_policy_mode, normalize_admin_user_api_formats,
-    normalize_admin_user_string_list,
+    normalize_admin_user_ip_rules, normalize_admin_user_string_list,
 };
 use crate::handlers::public::normalize_admin_base_url;
 use crate::GatewayError;
@@ -703,6 +703,27 @@ fn normalize_imported_user_api_formats(
         object.get(field_name),
         field_name,
     )?)
+}
+
+fn imported_ip_rules_field<'a>(
+    object: &'a Map<String, Value>,
+) -> (&'static str, Option<&'a Value>) {
+    if let Some(value) = object.get("ip_rules") {
+        ("ip_rules", Some(value))
+    } else {
+        ("allowed_ips", object.get("allowed_ips"))
+    }
+}
+
+fn imported_ip_rules_present(object: &Map<String, Value>) -> bool {
+    object.contains_key("ip_rules") || object.contains_key("allowed_ips")
+}
+
+fn normalize_imported_user_ip_rules(
+    object: &Map<String, Value>,
+) -> Result<Option<Vec<String>>, String> {
+    let (field_name, value) = imported_ip_rules_field(object);
+    normalize_admin_user_ip_rules(imported_string_list_from_value(value, field_name)?)
 }
 
 fn build_imported_user_group_record(
@@ -2493,6 +2514,7 @@ impl<'a> AdminAppState<'a> {
                 ));
                 let allowed_models =
                     invalid_value!(normalize_imported_user_string_list(key, "allowed_models"));
+                let ip_rules = invalid_value!(normalize_imported_user_ip_rules(key));
                 let rate_limit =
                     invalid_value!(imported_optional_i32(key.get("rate_limit"), "rate_limit"))
                         .unwrap_or(0);
@@ -2558,7 +2580,8 @@ impl<'a> AdminAppState<'a> {
                                         } else {
                                             None
                                         },
-                                        allowed_ips: None,
+                                        ip_rules: imported_ip_rules_present(key)
+                                            .then(|| ip_rules.clone()),
                                     },
                                 )
                                 .await?;
@@ -2627,7 +2650,7 @@ impl<'a> AdminAppState<'a> {
                         allowed_providers,
                         allowed_api_formats,
                         allowed_models,
-                        allowed_ips: None,
+                        ip_rules,
                         rate_limit,
                         concurrent_limit,
                         force_capabilities,
@@ -2712,6 +2735,7 @@ impl<'a> AdminAppState<'a> {
             ));
             let allowed_models =
                 invalid_value!(normalize_imported_user_string_list(key, "allowed_models"));
+            let ip_rules = invalid_value!(normalize_imported_user_ip_rules(key));
             let rate_limit =
                 invalid_value!(imported_optional_i32(key.get("rate_limit"), "rate_limit"))
                     .unwrap_or(0);
@@ -2783,7 +2807,8 @@ impl<'a> AdminAppState<'a> {
                                     allowed_providers: Some(allowed_providers.clone()),
                                     allowed_api_formats: Some(allowed_api_formats.clone()),
                                     allowed_models: Some(allowed_models.clone()),
-                                    allowed_ips: None,
+                                    ip_rules: imported_ip_rules_present(key)
+                                        .then(|| ip_rules.clone()),
                                     expires_at_present: false,
                                     expires_at_unix_secs: None,
                                     auto_delete_on_expiry_present: false,
@@ -2844,7 +2869,7 @@ impl<'a> AdminAppState<'a> {
                         allowed_providers,
                         allowed_api_formats,
                         allowed_models,
-                        allowed_ips: None,
+                        ip_rules,
                         rate_limit: Some(rate_limit),
                         concurrent_limit,
                         force_capabilities,

@@ -54,7 +54,7 @@ pub(super) fn sample_auth_context() -> GatewayControlAuthContext {
         admin_bypass_limits: false,
         local_rejection: None,
         allowed_models: None,
-        allowed_ips: None,
+        ip_rules: None,
     }
 }
 

@@ -334,7 +334,7 @@ type = "json"
 nullable = true
 
 [[table.api_keys.columns]]
-name = "allowed_ips"
+name = "ip_rules"
 type = "json"
 nullable = true
 

@@ -1,6 +1,6 @@
 use super::ADMIN_USERS_DATA_UNAVAILABLE_DETAIL;
 use crate::handlers::admin::shared::AdminTypedObjectPatch;
-use crate::handlers::shared::deserialize_optional_string_list_patch;
+use crate::handlers::shared::{deserialize_optional_string_list_patch, normalize_ip_rules};
 use axum::{
     body::Body,
     http,
@@ -20,8 +20,8 @@ pub(super) struct AdminCreateUserApiKeyRequest {
     pub(super) allowed_api_formats: Option<Vec<String>>,
     #[serde(default)]
     pub(super) allowed_models: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) allowed_ips: Option<Vec<String>>,
+    #[serde(default, alias = "allowed_ips")]
+    pub(super) ip_rules: Option<Vec<String>>,
     #[serde(default)]
     pub(super) rate_limit: Option<i32>,
     #[serde(default)]
@@ -52,8 +52,12 @@ pub(super) struct AdminUpdateUserApiKeyRequest {
     pub(super) concurrent_limit: Option<i32>,
     #[serde(default)]
     pub(super) feature_settings: Option<Option<Value>>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_list_patch")]
-    pub(super) allowed_ips: Option<Option<Vec<String>>>,
+    #[serde(
+        default,
+        alias = "allowed_ips",
+        deserialize_with = "deserialize_optional_string_list_patch"
+    )]
+    pub(super) ip_rules: Option<Option<Vec<String>>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -285,50 +289,10 @@ pub(crate) fn normalize_admin_user_api_formats(
     Ok(Some(normalized))
 }
 
-pub(crate) fn normalize_admin_user_allowed_ips(
+pub(crate) fn normalize_admin_user_ip_rules(
     value: Option<Vec<String>>,
 ) -> Result<Option<Vec<String>>, String> {
-    let Some(values) = value else {
-        return Ok(None);
-    };
-    if values.is_empty() {
-        return Err("IP 白名单不能为空列表，如需取消限制请不提供此字段".to_string());
-    }
-    let mut normalized = Vec::with_capacity(values.len());
-    for (index, raw) in values.into_iter().enumerate() {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Err(format!("IP 白名单第 {} 项为空", index + 1));
-        }
-        if !validate_admin_user_ip_or_cidr(trimmed) {
-            return Err(format!("无效的 IP 地址或 CIDR: {raw}"));
-        }
-        normalized.push(trimmed.to_string());
-    }
-    Ok(Some(normalized))
-}
-
-fn validate_admin_user_ip_or_cidr(value: &str) -> bool {
-    let value = value.trim();
-    if value.is_empty() {
-        return false;
-    }
-    if value.parse::<std::net::IpAddr>().is_ok() {
-        return true;
-    }
-    let Some((host, prefix)) = value.split_once('/') else {
-        return false;
-    };
-    let Ok(ip) = host.trim().parse::<std::net::IpAddr>() else {
-        return false;
-    };
-    let Ok(prefix) = prefix.trim().parse::<u8>() else {
-        return false;
-    };
-    match ip {
-        std::net::IpAddr::V4(_) => prefix <= 32,
-        std::net::IpAddr::V6(_) => prefix <= 128,
-    }
+    normalize_ip_rules(value)
 }
 
 pub(crate) fn normalize_admin_list_policy_mode(value: &str) -> Result<String, String> {
@@ -429,25 +393,25 @@ mod tests {
     }
 
     #[test]
-    fn admin_update_api_key_distinguishes_missing_null_and_present_allowed_ips() {
+    fn admin_update_api_key_distinguishes_missing_null_and_present_ip_rules() {
         let missing = serde_json::from_value::<AdminUpdateUserApiKeyRequest>(json!({
-            "name": "unchanged-whitelist",
+            "name": "unchanged-ip-rules",
         }))
-        .expect("missing allowed_ips should deserialize");
-        assert_eq!(missing.allowed_ips, None);
+        .expect("missing ip_rules should deserialize");
+        assert_eq!(missing.ip_rules, None);
 
         let cleared = serde_json::from_value::<AdminUpdateUserApiKeyRequest>(json!({
-            "allowed_ips": null,
+            "ip_rules": null,
         }))
-        .expect("null allowed_ips should deserialize");
-        assert_eq!(cleared.allowed_ips, Some(None));
+        .expect("null ip_rules should deserialize");
+        assert_eq!(cleared.ip_rules, Some(None));
 
         let updated = serde_json::from_value::<AdminUpdateUserApiKeyRequest>(json!({
-            "allowed_ips": ["203.0.113.10", "10.0.0.0/24"],
+            "ip_rules": ["203.0.113.10", "10.0.0.0/24"],
         }))
-        .expect("present allowed_ips should deserialize");
+        .expect("present ip_rules should deserialize");
         assert_eq!(
-            updated.allowed_ips,
+            updated.ip_rules,
             Some(Some(vec![
                 "203.0.113.10".to_string(),
                 "10.0.0.0/24".to_string(),

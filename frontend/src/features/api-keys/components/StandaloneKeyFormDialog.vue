@@ -236,6 +236,22 @@
             </p>
           </div>
 
+          <div class="space-y-2">
+            <Label
+              for="form-ip-rules"
+              class="text-sm font-medium"
+            >IP 限制</Label>
+            <Input
+              id="form-ip-rules"
+              v-model="form.ip_rules_text"
+              class="h-10"
+              placeholder="例如：203.0.113.10, 10.0.0.0/24, !10.0.0.13"
+            />
+            <p class="text-xs text-muted-foreground">
+              留空表示不限制；支持 IP、CIDR、IPv4 通配符、*，用 ! 前缀拒绝，多个规则用英文逗号分隔
+            </p>
+          </div>
+
           <div class="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
             <div class="flex items-center justify-between gap-3">
               <Label class="text-sm font-medium">敏感信息保护</Label>
@@ -344,6 +360,7 @@ export interface StandaloneKeyFormData {
   allowed_providers?: string[] | null
   allowed_api_formats?: string[] | null
   allowed_models?: string[] | null
+  ip_rules?: string[] | null
   feature_settings?: Record<string, unknown> | null
 }
 
@@ -365,6 +382,7 @@ interface StandaloneKeyFormState {
   allowed_providers: string[]
   allowed_api_formats: string[]
   allowed_models: string[]
+  ip_rules_text: string
   chat_pii_redaction_enabled: boolean
   chat_pii_redaction_placeholder_notice: boolean
 }
@@ -424,6 +442,7 @@ const form = ref<StandaloneKeyFormState>({
   allowed_providers: [],
   allowed_api_formats: [],
   allowed_models: [],
+  ip_rules_text: '',
   chat_pii_redaction_enabled: false,
   chat_pii_redaction_placeholder_notice: true,
 })
@@ -472,6 +491,7 @@ function resetForm() {
     allowed_providers: [],
     allowed_api_formats: [],
     allowed_models: [],
+    ip_rules_text: '',
     chat_pii_redaction_enabled: false,
     chat_pii_redaction_placeholder_notice: true,
   } as typeof form.value
@@ -498,6 +518,7 @@ function loadKeyData() {
     allowed_providers: props.apiKey.allowed_providers ? [...props.apiKey.allowed_providers] : [],
     allowed_api_formats: props.apiKey.allowed_api_formats ? [...props.apiKey.allowed_api_formats] : [],
     allowed_models: props.apiKey.allowed_models ? [...props.apiKey.allowed_models] : [],
+    ip_rules_text: props.apiKey.ip_rules?.join(', ') ?? '',
     chat_pii_redaction_enabled: redactionFeature.enabled,
     chat_pii_redaction_placeholder_notice: redactionFeature.inject_model_instruction,
   } as typeof form.value
@@ -548,11 +569,20 @@ function handleSubmit() {
     allowed_providers: form.value.provider_unrestricted ? null : [...form.value.allowed_providers],
     allowed_api_formats: form.value.api_format_unrestricted ? null : [...form.value.allowed_api_formats],
     allowed_models: form.value.model_unrestricted ? null : [...form.value.allowed_models],
+    ip_rules: parseIpRulesInput(form.value.ip_rules_text),
     feature_settings: mergeChatPiiRedactionFeatureSettings(props.apiKey?.feature_settings, {
       enabled: form.value.chat_pii_redaction_enabled,
       inject_model_instruction: form.value.chat_pii_redaction_placeholder_notice,
     }),
   })
+}
+
+function parseIpRulesInput(value: string): string[] | null {
+  const items = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+  return items.length > 0 ? items : null
 }
 
 // 设置保存状态

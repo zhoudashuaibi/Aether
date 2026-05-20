@@ -498,7 +498,7 @@ mod tests {
             admin_bypass_limits: false,
             local_rejection: None,
             allowed_models: None,
-            allowed_ips: None,
+            ip_rules: None,
         });
         let state = AppState::new().expect("state should build for tests");
 
@@ -538,7 +538,7 @@ mod tests {
             admin_bypass_limits: false,
             local_rejection: None,
             allowed_models: None,
-            allowed_ips: None,
+            ip_rules: None,
         });
         let state = AppState::new().expect("state should build for tests");
 
@@ -578,7 +578,7 @@ mod tests {
             admin_bypass_limits: true,
             local_rejection: None,
             allowed_models: None,
-            allowed_ips: None,
+            ip_rules: None,
         });
         let state = AppState::new().expect("state should build for tests");
 
@@ -622,7 +622,7 @@ mod tests {
             admin_bypass_limits: false,
             local_rejection: None,
             allowed_models: None,
-            allowed_ips: None,
+            ip_rules: None,
         });
         let state = AppState::new().expect("state should build for tests");
 

@@ -1090,7 +1090,7 @@
                       {{ apiKey.key_display || '****' }}
                     </code>
                     <span class="text-xs text-muted-foreground">
-                      IP 白名单：{{ formatAllowedIps(apiKey.allowed_ips) }}
+                      IP 限制：{{ formatIpRules(apiKey.ip_rules) }}
                     </span>
                     <button
                       class="p-0.5 hover:bg-muted rounded transition-colors"
@@ -1263,17 +1263,17 @@
         </div>
         <div class="space-y-2">
           <Label
-            for="admin-user-key-allowed-ips"
+            for="admin-user-key-ip-rules"
             class="text-sm font-medium"
-          >IP 白名单</Label>
+          >IP 限制</Label>
           <Input
-            id="admin-user-key-allowed-ips"
-            v-model="userApiKeyForm.allowed_ips_text"
+            id="admin-user-key-ip-rules"
+            v-model="userApiKeyForm.ip_rules_text"
             class="h-10"
-            placeholder="例如：203.0.113.10, 10.0.0.0/24"
+            placeholder="例如：203.0.113.10, 10.0.0.0/24, !10.0.0.13"
           />
           <p class="text-xs text-muted-foreground">
-            留空表示不限制来源 IP；支持 IP 或 CIDR，多个值用英文逗号分隔
+            留空表示不限制；支持 IP、CIDR、IPv4 通配符、*，用 ! 前缀拒绝，多个规则用英文逗号分隔
           </p>
         </div>
 
@@ -1580,7 +1580,7 @@ const userApiKeyForm = ref({
   name: '',
   rate_limit: undefined as number | undefined,
   concurrent_limit: undefined as number | undefined,
-  allowed_ips_text: '',
+  ip_rules_text: '',
   chat_pii_redaction_enabled: false,
   chat_pii_redaction_placeholder_notice: true,
 })
@@ -1888,11 +1888,11 @@ function formatConcurrentLimitSimple(concurrentLimit?: number | null): string {
   return `${concurrentLimit} 并发`
 }
 
-function formatAllowedIps(allowedIps?: string[] | null): string {
-  return allowedIps && allowedIps.length > 0 ? allowedIps.join(', ') : '不限制'
+function formatIpRules(ipRules?: string[] | null): string {
+  return ipRules && ipRules.length > 0 ? ipRules.join(', ') : '不限制'
 }
 
-function parseAllowedIpsInput(value: string): string[] | null {
+function parseIpRulesInput(value: string): string[] | null {
   const items = value
     .split(',')
     .map((item) => item.trim())
@@ -2110,7 +2110,7 @@ function openCreateUserApiKeyDialog() {
     name: `Key-${new Date().toISOString().split('T')[0]}`,
     rate_limit: undefined,
     concurrent_limit: undefined,
-    allowed_ips_text: '',
+    ip_rules_text: '',
     chat_pii_redaction_enabled: redactionFeature.enabled,
     chat_pii_redaction_placeholder_notice: redactionFeature.inject_model_instruction,
   }
@@ -2125,7 +2125,7 @@ function openEditUserApiKeyDialog(apiKey: ApiKey) {
     name: apiKey.name || '',
     rate_limit: apiKey.rate_limit ?? undefined,
     concurrent_limit: apiKey.concurrent_limit ?? undefined,
-    allowed_ips_text: apiKey.allowed_ips?.join(', ') ?? '',
+    ip_rules_text: apiKey.ip_rules?.join(', ') ?? '',
     chat_pii_redaction_enabled: redactionFeature.enabled,
     chat_pii_redaction_placeholder_notice: redactionFeature.inject_model_instruction,
   }
@@ -2139,7 +2139,7 @@ function closeUserApiKeyFormDialog() {
     name: '',
     rate_limit: undefined,
     concurrent_limit: undefined,
-    allowed_ips_text: '',
+    ip_rules_text: '',
     chat_pii_redaction_enabled: false,
     chat_pii_redaction_placeholder_notice: true,
   }
@@ -2154,13 +2154,13 @@ async function submitUserApiKeyForm() {
 
   creatingApiKey.value = true
   try {
-    const allowedIps = parseAllowedIpsInput(userApiKeyForm.value.allowed_ips_text)
+    const ipRules = parseIpRulesInput(userApiKeyForm.value.ip_rules_text)
     if (editingUserApiKey.value) {
       await usersStore.updateApiKey(selectedUser.value.id, editingUserApiKey.value.id, {
         name: userApiKeyForm.value.name,
         rate_limit: userApiKeyForm.value.rate_limit ?? 0,
         concurrent_limit: userApiKeyForm.value.concurrent_limit,
-        allowed_ips: allowedIps,
+        ip_rules: ipRules,
         feature_settings: mergeChatPiiRedactionFeatureSettings(editingUserApiKey.value.feature_settings, {
           enabled: userApiKeyForm.value.chat_pii_redaction_enabled,
           inject_model_instruction: userApiKeyForm.value.chat_pii_redaction_placeholder_notice,
@@ -2172,7 +2172,7 @@ async function submitUserApiKeyForm() {
         name: userApiKeyForm.value.name,
         rate_limit: userApiKeyForm.value.rate_limit ?? 0,
         concurrent_limit: userApiKeyForm.value.concurrent_limit,
-        allowed_ips: allowedIps,
+        ip_rules: ipRules,
         feature_settings: mergeChatPiiRedactionFeatureSettings(null, {
           enabled: userApiKeyForm.value.chat_pii_redaction_enabled,
           inject_model_instruction: userApiKeyForm.value.chat_pii_redaction_placeholder_notice,

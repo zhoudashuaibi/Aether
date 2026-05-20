@@ -575,7 +575,7 @@ mod tests {
             admin_bypass_limits: false,
             local_rejection: None,
             allowed_models: Some(allowed_models),
-            allowed_ips: None,
+            ip_rules: None,
         });
         decision
     }

@@ -1,7 +1,6 @@
 use super::super::super::{
     build_admin_users_bad_request_response, build_admin_users_read_only_response,
-    normalize_admin_feature_settings, normalize_admin_user_allowed_ips,
-    AdminUpdateUserApiKeyRequest,
+    normalize_admin_feature_settings, normalize_admin_user_ip_rules, AdminUpdateUserApiKeyRequest,
 };
 use super::super::helpers::{
     attach_audit_response, build_admin_user_api_key_detail_payload,
@@ -95,8 +94,8 @@ pub(crate) async fn build_admin_update_user_api_key_response(
                     .into_response());
             }
         };
-    let allowed_ips = match payload.allowed_ips {
-        Some(value) => match normalize_admin_user_allowed_ips(value) {
+    let ip_rules = match payload.ip_rules {
+        Some(value) => match normalize_admin_user_ip_rules(value) {
             Ok(value) => Some(value),
             Err(detail) => {
                 return Ok((
@@ -116,7 +115,7 @@ pub(crate) async fn build_admin_update_user_api_key_response(
             name,
             rate_limit: payload.rate_limit,
             concurrent_limit,
-            allowed_ips,
+            ip_rules,
         })
         .await?
     else {

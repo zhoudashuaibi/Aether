@@ -79,9 +79,9 @@ impl InMemoryAuthApiKeySnapshotRepository {
                     snapshot.api_key_is_standalone,
                 )
                 .and_then(|record| {
-                    record.with_allowed_ips(
+                    record.with_ip_rules(
                         snapshot
-                            .api_key_allowed_ips
+                            .api_key_ip_rules
                             .as_ref()
                             .map(|value| serde_json::json!(value)),
                     )
@@ -504,7 +504,7 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                 api_key_allowed_providers: record.allowed_providers.clone(),
                 api_key_allowed_api_formats: record.allowed_api_formats.clone(),
                 api_key_allowed_models: record.allowed_models.clone(),
-                api_key_allowed_ips: record.allowed_ips.clone(),
+                api_key_ip_rules: record.ip_rules.clone(),
                 ..template
             }
         } else {
@@ -543,9 +543,9 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                     .as_ref()
                     .map(|value| serde_json::json!(value)),
             )?
-            .with_api_key_allowed_ips(
+            .with_api_key_ip_rules(
                 record
-                    .allowed_ips
+                    .ip_rules
                     .as_ref()
                     .map(|value| serde_json::json!(value)),
             )?
@@ -581,9 +581,9 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
             record.total_cost_usd,
             false,
         )?
-        .with_allowed_ips(
+        .with_ip_rules(
             record
-                .allowed_ips
+                .ip_rules
                 .as_ref()
                 .map(|value| serde_json::json!(value)),
         )?
@@ -640,7 +640,7 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                 api_key_allowed_providers: record.allowed_providers.clone(),
                 api_key_allowed_api_formats: record.allowed_api_formats.clone(),
                 api_key_allowed_models: record.allowed_models.clone(),
-                api_key_allowed_ips: record.allowed_ips.clone(),
+                api_key_ip_rules: record.ip_rules.clone(),
                 ..template
             }
         } else {
@@ -679,9 +679,9 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                     .as_ref()
                     .map(|value| serde_json::json!(value)),
             )?
-            .with_api_key_allowed_ips(
+            .with_api_key_ip_rules(
                 record
-                    .allowed_ips
+                    .ip_rules
                     .as_ref()
                     .map(|value| serde_json::json!(value)),
             )?
@@ -717,9 +717,9 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
             record.total_cost_usd,
             true,
         )?
-        .with_allowed_ips(
+        .with_ip_rules(
             record
-                .allowed_ips
+                .ip_rules
                 .as_ref()
                 .map(|value| serde_json::json!(value)),
         )?
@@ -775,12 +775,12 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                 export.concurrent_limit = Some(concurrent_limit);
             }
         }
-        if let Some(allowed_ips) = record.allowed_ips {
+        if let Some(ip_rules) = record.ip_rules {
             if let Some(snapshot) = index.by_api_key_id.get_mut(&record.api_key_id) {
-                snapshot.api_key_allowed_ips = allowed_ips.clone();
+                snapshot.api_key_ip_rules = ip_rules.clone();
             }
             if let Some(export) = index.export_by_api_key_id.get_mut(&record.api_key_id) {
-                export.allowed_ips = allowed_ips;
+                export.ip_rules = ip_rules;
             }
         }
         Ok(index.export_by_api_key_id.get(&record.api_key_id).cloned())
@@ -848,12 +848,12 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                 export.allowed_models = allowed_models;
             }
         }
-        if let Some(allowed_ips) = record.allowed_ips {
+        if let Some(ip_rules) = record.ip_rules {
             if let Some(snapshot) = index.by_api_key_id.get_mut(&record.api_key_id) {
-                snapshot.api_key_allowed_ips = allowed_ips.clone();
+                snapshot.api_key_ip_rules = ip_rules.clone();
             }
             if let Some(export) = index.export_by_api_key_id.get_mut(&record.api_key_id) {
-                export.allowed_ips = allowed_ips;
+                export.ip_rules = ip_rules;
             }
         }
         if record.expires_at_present {
@@ -1289,7 +1289,7 @@ mod tests {
                 name: None,
                 rate_limit: None,
                 concurrent_limit: Some(11),
-                allowed_ips: None,
+                ip_rules: None,
             })
             .await
             .expect("update should succeed")
@@ -1324,7 +1324,7 @@ mod tests {
                 allowed_providers: None,
                 allowed_api_formats: None,
                 allowed_models: None,
-                allowed_ips: None,
+                ip_rules: None,
                 expires_at_present: false,
                 expires_at_unix_secs: None,
                 auto_delete_on_expiry_present: false,
