@@ -1,8 +1,8 @@
 <template>
-  <!-- 聚合数据导入对话框 -->
+  <!-- 完整备份导入对话框 -->
   <Dialog
     :open="aggregateImportDialogOpen"
-    title="导入聚合数据"
+    title="导入完整备份"
     description="选择冲突处理模式并确认导入"
     @update:open="$emit('update:aggregateImportDialogOpen', $event)"
   >
@@ -12,7 +12,7 @@
         class="text-sm"
       >
         <p class="font-medium mb-2">
-          聚合数据预览
+          完整备份预览
         </p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-muted-foreground">
           <div>
@@ -84,8 +84,24 @@
       </div>
 
       <p class="text-xs text-muted-foreground">
-        注意：聚合数据会先导入配置数据，再导入用户数据；用户 API Keys 需要目标系统使用相同的 ENCRYPTION_KEY。
+        注意：完整备份会先导入配置数据，再导入用户数据；文件包含用户、用户组、API Keys 与钱包快照，用户 API Keys 需要目标系统使用相同的 ENCRYPTION_KEY。
       </p>
+
+      <div
+        v-if="importAggregateProgress"
+        class="space-y-2 rounded-md border border-border p-3"
+      >
+        <div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span>{{ importAggregateProgress.message }}</span>
+          <span>{{ importAggregateProgress.percent }}%</span>
+        </div>
+        <div class="h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            class="h-full bg-primary transition-all"
+            :style="{ width: `${importAggregateProgress.percent}%` }"
+          />
+        </div>
+      </div>
     </div>
 
     <template #footer>
@@ -104,10 +120,10 @@
     </template>
   </Dialog>
 
-  <!-- 聚合数据导入结果对话框 -->
+  <!-- 完整备份导入结果对话框 -->
   <Dialog
     :open="aggregateImportResultDialogOpen"
-    title="聚合数据导入完成"
+    title="完整备份导入完成"
     @update:open="$emit('update:aggregateImportResultDialogOpen', $event)"
   >
     <div
@@ -174,6 +190,7 @@ import SelectContent from '@/components/ui/select-content.vue'
 import SelectItem from '@/components/ui/select-item.vue'
 import { Dialog } from '@/components/ui'
 import type { AggregateExportData, AggregateImportResponse } from '@/api/admin'
+import type { ImportProgressState } from './composables/useConfigExportImport'
 
 const props = defineProps<{
   aggregateImportDialogOpen: boolean
@@ -183,6 +200,7 @@ const props = defineProps<{
   aggregateMergeMode: 'skip' | 'overwrite' | 'error'
   aggregateMergeModeSelectOpen: boolean
   importAggregateLoading: boolean
+  importAggregateProgress: ImportProgressState | null
 }>()
 
 defineEmits<{

@@ -1,11 +1,15 @@
 import apiClient from './client'
 import type { ModelTestCapabilities } from './endpoints/types'
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import { cachedRequest, buildCacheKey } from '@/utils/cache'
 import type { BillingSummary } from './auth'
 import type { ApiKeyInstallSession, InstallSessionTargetSystem, InstallTargetCli } from './me'
 
 const SYSTEM_DATA_IMPORT_TIMEOUT_MS = 10 * 60 * 1000
+
+export interface SystemDataImportOptions {
+  onUploadProgress?: AxiosRequestConfig['onUploadProgress']
+}
 
 function extractConflictPayload(error: unknown): ManualUsageCleanupConflict | null {
   if (!axios.isAxiosError(error) || error.response?.status !== 409) {
@@ -859,11 +863,11 @@ export const adminApi = {
   },
 
   // 导入配置
-  async importConfig(data: ConfigImportRequest): Promise<ConfigImportResponse> {
+  async importConfig(data: ConfigImportRequest, options: SystemDataImportOptions = {}): Promise<ConfigImportResponse> {
     const response = await apiClient.post<ConfigImportResponse>(
       '/api/admin/system/config/import',
       data,
-      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS }
+      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS, ...options }
     )
     return response.data
   },
@@ -875,27 +879,27 @@ export const adminApi = {
   },
 
   // 导入用户数据
-  async importUsers(data: UsersImportRequest): Promise<UsersImportResponse> {
+  async importUsers(data: UsersImportRequest, options: SystemDataImportOptions = {}): Promise<UsersImportResponse> {
     const response = await apiClient.post<UsersImportResponse>(
       '/api/admin/system/users/import',
       data,
-      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS }
+      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS, ...options }
     )
     return response.data
   },
 
-  // 导出聚合数据（配置数据 + 用户数据）
+  // 导出完整备份（配置数据 + 用户数据）
   async exportAggregateData(): Promise<AggregateExportData> {
     const response = await apiClient.get<AggregateExportData>('/api/admin/system/data/export')
     return response.data
   },
 
-  // 导入聚合数据（配置数据 + 用户数据）
-  async importAggregateData(data: AggregateImportRequest): Promise<AggregateImportResponse> {
+  // 导入完整备份（配置数据 + 用户数据）
+  async importAggregateData(data: AggregateImportRequest, options: SystemDataImportOptions = {}): Promise<AggregateImportResponse> {
     const response = await apiClient.post<AggregateImportResponse>(
       '/api/admin/system/data/import',
       data,
-      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS }
+      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS, ...options }
     )
     return response.data
   },

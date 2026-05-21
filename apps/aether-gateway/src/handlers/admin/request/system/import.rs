@@ -49,7 +49,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-const ADMIN_SYSTEM_IMPORT_MAX_SIZE_BYTES: usize = 10 * 1024 * 1024;
+const ADMIN_SYSTEM_IMPORT_MAX_SIZE_BYTES: usize = 500 * 1024 * 1024;
 
 fn invalid_request(detail: impl Into<String>) -> (http::StatusCode, Value) {
     (
@@ -173,6 +173,9 @@ fn normalize_import_endpoint_format(value: &str) -> Result<String, String> {
     let normalized = match value.trim().to_ascii_lowercase().as_str() {
         "openai:cli" => "openai:responses",
         "openai:compact" => "openai:responses:compact",
+        "openai_image" | "images" | "image" | "/v1/images/generations" | "/v1/images/edits" => {
+            "openai:image"
+        }
         "claude:chat" | "claude:cli" => "claude:messages",
         "gemini:chat" | "gemini:cli" => "gemini:generate_content",
         _ => value.trim(),
@@ -956,7 +959,7 @@ impl<'a> AdminAppState<'a> {
         }
 
         if request_body.len() > ADMIN_SYSTEM_DATA_IMPORT_MAX_SIZE_BYTES {
-            return Ok(Err(invalid_request("请求体大小不能超过 20MB")));
+            return Ok(Err(invalid_request("请求体大小不能超过 500MB")));
         }
 
         let root = match serde_json::from_slice::<Value>(request_body) {
@@ -1053,7 +1056,7 @@ impl<'a> AdminAppState<'a> {
             )));
         }
         if request_body.len() > ADMIN_SYSTEM_IMPORT_MAX_SIZE_BYTES {
-            return Ok(Err(invalid_request("请求体大小不能超过 10MB")));
+            return Ok(Err(invalid_request("请求体大小不能超过 500MB")));
         }
 
         let parsed = routed!(parse_admin_system_config_import_request(request_body));
@@ -1993,7 +1996,7 @@ impl<'a> AdminAppState<'a> {
             )));
         }
         if request_body.len() > ADMIN_SYSTEM_IMPORT_MAX_SIZE_BYTES {
-            return Ok(Err(invalid_request("请求体大小不能超过 10MB")));
+            return Ok(Err(invalid_request("请求体大小不能超过 500MB")));
         }
 
         let root = match serde_json::from_slice::<Value>(request_body) {
@@ -3062,6 +3065,10 @@ mod tests {
         for (raw, expected) in [
             ("openai:cli", "openai:responses"),
             ("openai:compact", "openai:responses:compact"),
+            ("openai_image", "openai:image"),
+            ("images", "openai:image"),
+            ("/v1/images/generations", "openai:image"),
+            ("/v1/images/edits", "openai:image"),
             ("claude:chat", "claude:messages"),
             ("claude:cli", "claude:messages"),
             ("gemini:chat", "gemini:generate_content"),

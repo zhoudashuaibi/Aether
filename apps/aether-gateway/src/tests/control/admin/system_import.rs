@@ -479,6 +479,73 @@ async fn gateway_imports_admin_system_config_locally_and_persists_data() {
 }
 
 #[tokio::test]
+async fn gateway_imports_admin_system_config_openai_image_aliases() {
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    ));
+    let global_model_repository = Arc::new(InMemoryGlobalModelReadRepository::seed(Vec::<
+        StoredPublicGlobalModel,
+    >::new()));
+    let data_state = build_admin_system_data_state_with_repositories(
+        Arc::clone(&provider_catalog_repository),
+        Arc::clone(&global_model_repository),
+    );
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(data_state),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let mut payload = sample_system_import_payload();
+    payload["providers"][0]["endpoints"][0]["api_format"] = json!("openai_image");
+    payload["providers"][0]["api_keys"][0]["api_formats"] = json!(["images"]);
+    payload["providers"][0]["api_keys"][0]["supported_endpoints"] = json!(["openai:image"]);
+    payload["providers"][0]["models"][0]["supports_image_generation"] = json!(true);
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/admin/system/config/import"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&payload)
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let status = response.status();
+    let body: Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={body}");
+    assert_eq!(body["stats"]["endpoints"]["created"], json!(1));
+    assert_eq!(body["stats"]["keys"]["created"], json!(1));
+
+    let providers = provider_catalog_repository
+        .list_providers(false)
+        .await
+        .expect("providers should load");
+    let provider_ids = providers
+        .iter()
+        .map(|provider| provider.id.clone())
+        .collect::<Vec<_>>();
+    let endpoints = provider_catalog_repository
+        .list_endpoints_by_provider_ids(&provider_ids)
+        .await
+        .expect("endpoints should load");
+    assert_eq!(endpoints[0].api_format, "openai:image");
+
+    let keys = provider_catalog_repository
+        .list_keys_by_provider_ids(&provider_ids)
+        .await
+        .expect("keys should load");
+    assert_eq!(keys[0].api_formats, Some(json!(["openai:image"])));
+
+    gateway_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_returns_503_for_admin_system_config_import_when_local_data_is_unavailable() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);

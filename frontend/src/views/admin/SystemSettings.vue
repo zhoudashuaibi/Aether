@@ -198,6 +198,7 @@
       :merge-mode="mergeMode"
       :merge-mode-select-open="mergeModeSelectOpen"
       :import-loading="importLoading"
+      :import-progress="importProgress"
       @confirm="confirmImport"
       @update:import-dialog-open="importDialogOpen = $event"
       @update:import-result-dialog-open="importResultDialogOpen = $event"
@@ -214,6 +215,7 @@
       :users-merge-mode="usersMergeMode"
       :users-merge-mode-select-open="usersMergeModeSelectOpen"
       :import-users-loading="importUsersLoading"
+      :import-users-progress="importUsersProgress"
       @confirm="confirmImportUsers"
       @update:import-users-dialog-open="importUsersDialogOpen = $event"
       @update:import-users-result-dialog-open="importUsersResultDialogOpen = $event"
@@ -221,7 +223,7 @@
       @update:users-merge-mode-select-open="usersMergeModeSelectOpen = $event"
     />
 
-    <!-- 聚合数据导入对话框 -->
+    <!-- 完整备份导入对话框 -->
     <AggregateImportDialog
       :aggregate-import-dialog-open="aggregateImportDialogOpen"
       :aggregate-import-result-dialog-open="aggregateImportResultDialogOpen"
@@ -230,6 +232,7 @@
       :aggregate-merge-mode="aggregateMergeMode"
       :aggregate-merge-mode-select-open="aggregateMergeModeSelectOpen"
       :import-aggregate-loading="importAggregateLoading"
+      :import-aggregate-progress="importAggregateProgress"
       @confirm="confirmImportAggregate"
       @update:aggregate-import-dialog-open="aggregateImportDialogOpen = $event"
       @update:aggregate-import-result-dialog-open="aggregateImportResultDialogOpen = $event"
@@ -364,6 +367,7 @@ const {
   importResult,
   mergeMode,
   mergeModeSelectOpen,
+  importProgress,
   handleExportConfig,
   handleConfigFileSelect,
   confirmImport,
@@ -375,6 +379,7 @@ const {
   importUsersResult,
   usersMergeMode,
   usersMergeModeSelectOpen,
+  importUsersProgress,
   handleExportUsers,
   handleUsersFileSelect,
   confirmImportUsers,
@@ -386,6 +391,7 @@ const {
   aggregateImportResult,
   aggregateMergeMode,
   aggregateMergeModeSelectOpen,
+  importAggregateProgress,
   handleExportAggregate,
   handleAggregateFileSelect,
   confirmImportAggregate,
