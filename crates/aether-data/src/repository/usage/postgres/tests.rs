@@ -501,6 +501,34 @@ fn usage_sql_summarize_total_tokens_by_api_key_ids_supports_daily_aggregates() {
 }
 
 #[test]
+fn dashboard_aggregate_schema_mismatch_detector_matches_legacy_schema_failures() {
+    assert!(super::dashboard_aggregate_schema_mismatch_message(
+        "postgres error: error occurred while decoding column \"cutoff_date\": \
+         mismatched types; Rust type `chrono::DateTime<Utc>` (as SQL type `TIMESTAMPTZ`) \
+         is not compatible with SQL type `INT8`"
+    ));
+    assert!(super::dashboard_aggregate_schema_mismatch_message(
+        "postgres error: db error: ERROR: relation \"stats_daily_model_provider\" does not exist"
+    ));
+    assert!(super::dashboard_aggregate_schema_mismatch_message(
+        "postgres error: db error: ERROR: column \"effective_input_tokens\" does not exist"
+    ));
+    assert!(!super::dashboard_aggregate_schema_mismatch_message(
+        "postgres error: db error: ERROR: permission denied for relation stats_daily"
+    ));
+}
+
+#[test]
+fn dashboard_aggregate_reads_fallback_to_raw_on_schema_mismatch() {
+    let source = include_str!("mod.rs");
+    assert!(source.contains("dashboard_should_fallback_to_raw_on_aggregate_error"));
+    assert!(
+        source.contains("Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err)")
+    );
+    assert!(source.contains("return self.list_dashboard_daily_breakdown_raw(query).await;"));
+}
+
+#[test]
 fn usage_sql_summarize_usage_totals_by_user_ids_supports_user_summary_aggregates() {
     let source = include_str!("mod.rs");
     assert!(source.contains("FROM stats_user_summary"));

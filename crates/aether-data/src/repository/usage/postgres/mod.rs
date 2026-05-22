@@ -175,6 +175,38 @@ fn split_dashboard_hourly_aggregate_range(
     }
 }
 
+fn dashboard_aggregate_schema_mismatch_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    let references_dashboard_aggregate = [
+        "stats_summary",
+        "stats_daily",
+        "stats_user_daily",
+        "stats_daily_model_provider",
+        "stats_user_daily_model_provider",
+        "cutoff_date",
+        "effective_input_tokens",
+        "total_input_context",
+        "response_time_sum_ms",
+        "response_time_samples",
+    ]
+    .iter()
+    .any(|pattern| message.contains(pattern));
+    if !references_dashboard_aggregate {
+        return false;
+    }
+
+    message.contains("does not exist")
+        || message.contains("unknown column")
+        || message.contains("no column named")
+        || message.contains("error occurred while decoding column")
+        || message.contains("is not compatible with sql type")
+        || message.contains("unexpected null")
+}
+
+fn dashboard_should_fallback_to_raw_on_aggregate_error(err: &DataLayerError) -> bool {
+    dashboard_aggregate_schema_mismatch_message(&err.to_string())
+}
+
 fn absorb_dashboard_summary(
     target: &mut StoredUsageDashboardSummary,
     part: &StoredUsageDashboardSummary,
@@ -4065,7 +4097,20 @@ ORDER BY created_at_unix_secs ASC, group_id ASC, usage_id ASC
         &self,
         query: &UsageDashboardSummaryQuery,
     ) -> Result<StoredUsageDashboardSummary, DataLayerError> {
-        let Some(cutoff_utc) = self.read_stats_daily_cutoff_date().await? else {
+        let cutoff_utc = match self.read_stats_daily_cutoff_date().await {
+            Ok(value) => value,
+            Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err) => {
+                return self
+                    .summarize_dashboard_usage_raw(
+                        query.created_from_unix_secs,
+                        query.created_until_unix_secs,
+                        query.user_id.as_deref(),
+                    )
+                    .await;
+            }
+            Err(err) => return Err(err),
+        };
+        let Some(cutoff_utc) = cutoff_utc else {
             return self
                 .summarize_dashboard_usage_raw(
                     query.created_from_unix_secs,
@@ -4099,13 +4144,26 @@ ORDER BY created_at_unix_secs ASC, group_id ASC, usage_id ASC
             absorb_dashboard_summary(&mut summary, &raw);
         }
         if let Some((aggregate_start, aggregate_end)) = split.aggregate {
-            let aggregate = self
+            let aggregate = match self
                 .summarize_dashboard_usage_from_daily_aggregates(
                     aggregate_start,
                     aggregate_end,
                     query.user_id.as_deref(),
                 )
-                .await?;
+                .await
+            {
+                Ok(value) => value,
+                Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err) => {
+                    return self
+                        .summarize_dashboard_usage_raw(
+                            query.created_from_unix_secs,
+                            query.created_until_unix_secs,
+                            query.user_id.as_deref(),
+                        )
+                        .await;
+                }
+                Err(err) => return Err(err),
+            };
             absorb_dashboard_summary(&mut summary, &aggregate);
         }
         if let Some((raw_start, raw_end)) = split.raw_trailing {
@@ -4300,7 +4358,14 @@ ORDER BY date ASC, total_cost_usd DESC, "usage".model ASC, "usage".provider_name
             return self.list_dashboard_daily_breakdown_raw(query).await;
         }
 
-        let Some(cutoff_utc) = self.read_stats_daily_cutoff_date().await? else {
+        let cutoff_utc = match self.read_stats_daily_cutoff_date().await {
+            Ok(value) => value,
+            Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err) => {
+                return self.list_dashboard_daily_breakdown_raw(query).await;
+            }
+            Err(err) => return Err(err),
+        };
+        let Some(cutoff_utc) = cutoff_utc else {
             return self.list_dashboard_daily_breakdown_raw(query).await;
         };
         let start_utc = dashboard_unix_secs_to_utc(query.created_from_unix_secs);
@@ -4323,14 +4388,21 @@ ORDER BY date ASC, total_cost_usd DESC, "usage".model ASC, "usage".provider_name
             );
         }
         if let Some((aggregate_start, aggregate_end)) = split.aggregate {
-            items.extend(
-                self.list_dashboard_daily_breakdown_from_daily_aggregates(
+            let aggregate_rows = match self
+                .list_dashboard_daily_breakdown_from_daily_aggregates(
                     aggregate_start,
                     aggregate_end,
                     query.user_id.as_deref(),
                 )
-                .await?,
-            );
+                .await
+            {
+                Ok(value) => value,
+                Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err) => {
+                    return self.list_dashboard_daily_breakdown_raw(query).await;
+                }
+                Err(err) => return Err(err),
+            };
+            items.extend(aggregate_rows);
         }
         if let Some((raw_start, raw_end)) = split.raw_trailing {
             items.extend(
