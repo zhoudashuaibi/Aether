@@ -551,6 +551,101 @@ mod tests {
         assert_eq!(converted["stream"], true);
     }
 
+    #[test]
+    fn standard_openai_chat_to_claude_normalizes_multiturn_tool_history() {
+        let request = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "system", "content": "Be precise."},
+                {"role": "user", "content": "check two things"},
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "weather-1",
+                            "type": "function",
+                            "function": {"name": "get_weather", "arguments": "{\"city\":\"NYC\"}"}
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{\"q\":\"db\"}"}
+                        }
+                    ]
+                },
+                {"role": "tool", "tool_call_id": "weather-1", "content": ""},
+                {"role": "tool", "tool_call_id": "call_2", "content": [{"type": "text", "text": "rows=1"}]},
+                {"role": "user", "content": "now answer"}
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "get_weather", "description": "Get weather", "parameters": null}
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookup",
+                        "description": "Lookup data",
+                        "parameters": {"properties": {"q": {"type": "string"}}}
+                    }
+                }
+            ],
+            "parallel_tool_calls": true,
+            "max_tokens": 128,
+            "stream": true
+        });
+
+        let converted = build_standard_request_body(
+            &request,
+            "openai:chat",
+            "claude-sonnet-4-5",
+            "custom",
+            "claude:messages",
+            "/v1/chat/completions",
+            true,
+            None,
+            None,
+        )
+        .expect("openai chat tool history should build as claude messages");
+
+        assert_eq!(converted["model"], "claude-sonnet-4-5");
+        assert_eq!(converted["system"], "Be precise.");
+        assert_eq!(converted["messages"][0]["role"], "user");
+        assert_eq!(converted["messages"][1]["role"], "assistant");
+        assert_eq!(converted["messages"][1]["content"][0]["type"], "tool_use");
+        assert_eq!(
+            converted["messages"][1]["content"][0]["id"],
+            "toolu_weather-1"
+        );
+        assert_eq!(converted["messages"][1]["content"][1]["id"], "call_2");
+        assert_eq!(converted["messages"][2]["role"], "user");
+        assert_eq!(
+            converted["messages"][2]["content"][0]["type"],
+            "tool_result"
+        );
+        assert_eq!(
+            converted["messages"][2]["content"][0]["tool_use_id"],
+            "toolu_weather-1"
+        );
+        assert_eq!(converted["messages"][2]["content"][0]["content"], "(empty)");
+        assert_eq!(
+            converted["messages"][2]["content"][1]["tool_use_id"],
+            "call_2"
+        );
+        assert_eq!(converted["messages"][2]["content"][1]["content"], "rows=1");
+        assert_eq!(converted["messages"][2]["content"][2]["type"], "text");
+        assert_eq!(converted["messages"][2]["content"][2]["text"], "now answer");
+        assert_eq!(converted["tools"][0]["input_schema"]["type"], "object");
+        assert_eq!(
+            converted["tools"][0]["input_schema"]["properties"],
+            json!({})
+        );
+        assert_eq!(converted["tools"][1]["input_schema"]["type"], "object");
+        assert_eq!(converted["stream"], true);
+    }
+
     fn codex_default_body_rules() -> Value {
         json!([
             {"action":"drop","path":"max_output_tokens"},
