@@ -1626,6 +1626,10 @@ mod tests {
             8084,
             "http://localhost:8084/v1/responses"
         ));
+        assert!(gateway_frontdoor_self_loop_guard_matches_with_port(
+            8084,
+            "http://localhost:8084/v1internal:streamGenerateContent?alt=sse"
+        ));
     }
 
     #[test]

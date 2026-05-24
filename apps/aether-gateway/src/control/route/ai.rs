@@ -8,7 +8,9 @@ pub(super) fn classify_ai_public_route(
     normalized_path: &str,
     headers: &http::HeaderMap,
 ) -> Option<ClassifiedRoute> {
-    if method == http::Method::POST && normalized_path == "/v1/chat/completions" {
+    if let Some(route) = classify_antigravity_v1internal_route(method, normalized_path) {
+        Some(route)
+    } else if method == http::Method::POST && normalized_path == "/v1/chat/completions" {
         Some(classified(
             "ai_public",
             "openai",
@@ -155,4 +157,35 @@ pub(super) fn classify_ai_public_route(
     } else {
         None
     }
+}
+
+fn classify_antigravity_v1internal_route(
+    method: &http::Method,
+    normalized_path: &str,
+) -> Option<ClassifiedRoute> {
+    if method != http::Method::POST {
+        return None;
+    }
+
+    let action = normalized_path.strip_prefix("/v1internal:")?;
+    let (route_kind, execution_runtime_candidate) = match action {
+        "loadCodeAssist" => ("load_code_assist", false),
+        "fetchAvailableModels" => ("fetch_available_models", false),
+        "fetchUserInfo" => ("fetch_user_info", false),
+        "fetchAdminControls" => ("fetch_admin_controls", false),
+        "setUserSettings" => ("set_user_settings", false),
+        "listExperiments" => ("list_experiments", false),
+        "recordCodeAssistMetrics" => ("record_code_assist_metrics", false),
+        "streamGenerateContent" => ("stream_generate_content", true),
+        _ => return None,
+    };
+
+    Some(classified_with_request_auth_channel(
+        "ai_public",
+        "antigravity",
+        route_kind,
+        "bearer_like",
+        "antigravity:v1internal",
+        execution_runtime_candidate,
+    ))
 }

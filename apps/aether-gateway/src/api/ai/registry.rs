@@ -17,6 +17,14 @@ const AI_POST_ROUTE_PATTERNS: &[&str] = &[
     "/v1/responses/compact",
     "/v1/images/generations",
     "/v1/images/edits",
+    "/v1internal:loadCodeAssist",
+    "/v1internal:fetchAvailableModels",
+    "/v1internal:fetchUserInfo",
+    "/v1internal:fetchAdminControls",
+    "/v1internal:setUserSettings",
+    "/v1internal:listExperiments",
+    "/v1internal:recordCodeAssistMetrics",
+    "/v1internal:streamGenerateContent",
 ];
 
 const AI_ANY_ROUTE_PATTERNS: &[&str] = &[

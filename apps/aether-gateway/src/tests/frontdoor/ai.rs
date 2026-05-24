@@ -701,6 +701,138 @@ async fn gateway_rejects_invalid_claude_count_tokens_payload_without_hitting_fal
 }
 
 #[tokio::test]
+async fn gateway_handles_antigravity_v1internal_control_plane_without_proxying() {
+    let fallback_probe_hits = Arc::new(Mutex::new(0usize));
+    let fallback_probe_hits_clone = Arc::clone(&fallback_probe_hits);
+    let fallback_probe = Router::new().route(
+        "/{*path}",
+        any(move |_request: Request| {
+            let fallback_probe_hits_inner = Arc::clone(&fallback_probe_hits_clone);
+            async move {
+                *fallback_probe_hits_inner.lock().expect("mutex should lock") += 1;
+                (StatusCode::OK, Json(json!({"proxied": true}))).into_response()
+            }
+        }),
+    );
+
+    let (_unused_fallback_probe_url, fallback_probe_handle) = start_server(fallback_probe).await;
+    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let client = reqwest::Client::new();
+
+    let user_settings = json!({
+        "preferredModelId": "gemini-3.5-flash-low",
+        "theme": "dark"
+    });
+    let requests = vec![
+        (
+            "/v1internal:loadCodeAssist",
+            json!({"metadata": {"ideType": "ANTIGRAVITY_CLI"}}),
+        ),
+        (
+            "/v1internal:fetchAvailableModels",
+            json!({"project": "aether-antigravity-local"}),
+        ),
+        (
+            "/v1internal:fetchUserInfo",
+            json!({"project": "aether-antigravity-local"}),
+        ),
+        (
+            "/v1internal:fetchAdminControls",
+            json!({"project": "aether-antigravity-local"}),
+        ),
+        ("/v1internal:listExperiments", json!({})),
+        (
+            "/v1internal:recordCodeAssistMetrics",
+            json!({
+                "project": "aether-antigravity-local",
+                "requestId": "opaque-request-id",
+                "metrics": []
+            }),
+        ),
+        (
+            "/v1internal:setUserSettings",
+            json!({"userSettings": user_settings.clone()}),
+        ),
+    ];
+
+    for (path, request_body) in requests {
+        let response = client
+            .post(format!("{gateway_url}{path}"))
+            .header("authorization", "Bearer ant-access-token")
+            .header("user-agent", "antigravity/cli/1.0.2 linux/arm64")
+            .json(&request_body)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK, "path {path}");
+        assert_eq!(
+            response
+                .headers()
+                .get(EXECUTION_PATH_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some(EXECUTION_PATH_LOCAL_AI_PUBLIC),
+            "path {path}"
+        );
+        let payload: serde_json::Value = response.json().await.expect("json body should parse");
+
+        match path {
+            "/v1internal:loadCodeAssist" => {
+                assert_eq!(
+                    payload["cloudaicompanionProject"],
+                    "aether-antigravity-local"
+                );
+                assert_eq!(payload["currentTier"], "free");
+                assert_eq!(payload["paidTier"], false);
+                assert_eq!(payload["gcpManaged"], false);
+                assert_eq!(payload["allowedTiers"], json!(["free"]));
+                assert_eq!(payload["upgradeSubscriptionUri"], "");
+            }
+            "/v1internal:fetchAvailableModels" => {
+                assert_eq!(payload["defaultAgentModelId"], "gemini-3.5-flash-low");
+                assert_eq!(payload["tieredModelIds"]["flash"], "gemini-3-flash-agent");
+                assert_eq!(
+                    payload["models"]["gemini-3.5-flash-low"]["id"],
+                    "gemini-3.5-flash-low"
+                );
+                assert_eq!(payload["commandModelIds"], json!(["gemini-3-flash"]));
+                assert_eq!(
+                    payload["imageGenerationModelIds"],
+                    json!(["gemini-3.1-flash-image"])
+                );
+            }
+            "/v1internal:fetchUserInfo" => {
+                assert_eq!(payload["regionCode"], "US");
+                assert_eq!(
+                    payload["userSettings"]["preferredModelId"],
+                    "gemini-3.5-flash-low"
+                );
+            }
+            "/v1internal:fetchAdminControls" => {
+                assert_eq!(payload, json!({}));
+            }
+            "/v1internal:listExperiments" => {
+                assert_eq!(payload["experimentIds"], json!([]));
+                assert_eq!(payload["flags"], json!({}));
+            }
+            "/v1internal:recordCodeAssistMetrics" => {
+                assert_eq!(payload, json!({}));
+            }
+            "/v1internal:setUserSettings" => {
+                assert_eq!(payload["userSettings"], user_settings);
+            }
+            other => panic!("unexpected path {other}"),
+        }
+    }
+
+    assert_eq!(*fallback_probe_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    fallback_probe_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_does_not_locally_reject_image_model_name_on_chat_completions() {
     let fallback_probe_hits = Arc::new(Mutex::new(0usize));
     let fallback_probe_hits_clone = Arc::clone(&fallback_probe_hits);

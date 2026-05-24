@@ -712,7 +712,12 @@ async fn build_data_backed_auth_context(
         })
     } else if snapshot
         .effective_allowed_api_formats()
-        .is_some_and(|allowed| !contains_api_format_or_alias(allowed, auth_endpoint_signature))
+        .is_some_and(|allowed| {
+            !contains_api_format_or_alias(
+                allowed,
+                auth_gate_api_format(auth_endpoint_signature).as_str(),
+            )
+        })
     {
         Some(GatewayLocalAuthRejection::ApiFormatNotAllowed {
             api_format: auth_endpoint_signature.to_string(),
@@ -745,6 +750,15 @@ fn contains_api_format_or_alias(items: &[String], target: &str) -> bool {
 
 fn normalize_api_format_alias(value: &str) -> String {
     crate::ai_serving::normalize_api_format_alias(value)
+}
+
+fn auth_gate_api_format(auth_endpoint_signature: &str) -> String {
+    let normalized = normalize_api_format_alias(auth_endpoint_signature);
+    if normalized == "antigravity:v1internal" {
+        "gemini:generate_content".to_string()
+    } else {
+        normalized
+    }
 }
 
 fn api_format_matches(left: &str, right: &str) -> bool {
@@ -1253,6 +1267,58 @@ mod tests {
             &headers,
             &uri("/v1/messages"),
             Some("claude:messages"),
+        )
+        .await
+        .expect("resolution should succeed")
+        .expect("auth context should exist");
+
+        assert_eq!(auth_context.local_rejection, None);
+    }
+
+    #[tokio::test]
+    async fn data_backed_auth_context_allows_antigravity_v1internal_for_gemini_generate_content_keys(
+    ) {
+        let api_key = "sk-test-antigravity-v1internal";
+        let mut snapshot = sample_snapshot("key-ant-v1internal", "user-ant-v1internal");
+        snapshot.user_allowed_providers = Some(vec!["antigravity".to_string()]);
+        snapshot.api_key_allowed_providers = Some(vec!["antigravity".to_string()]);
+        snapshot.user_allowed_api_formats = Some(vec!["gemini:generate_content".to_string()]);
+        snapshot.api_key_allowed_api_formats = Some(vec!["gemini:generate_content".to_string()]);
+        let repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+            Some(hash_api_key(api_key)),
+            snapshot,
+        )]));
+        let provider_catalog = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+            vec![sample_provider(
+                "provider-antigravity-1",
+                "Antigravity",
+                "antigravity",
+            )],
+            vec![sample_endpoint(
+                "endpoint-antigravity-1",
+                "provider-antigravity-1",
+                "gemini:generate_content",
+            )],
+            Vec::new(),
+        ));
+        let data = GatewayDataState::with_auth_api_key_reader_for_tests(repository)
+            .with_provider_catalog_reader(provider_catalog);
+        let state = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", api_key.parse().unwrap());
+        headers.insert(
+            http::header::AUTHORIZATION,
+            "Bearer google-oauth-access-token".parse().unwrap(),
+        );
+
+        let auth_context = resolve_data_backed_auth_context(
+            &state,
+            &headers,
+            &uri("/v1internal:streamGenerateContent?alt=sse"),
+            Some("antigravity:v1internal"),
         )
         .await
         .expect("resolution should succeed")

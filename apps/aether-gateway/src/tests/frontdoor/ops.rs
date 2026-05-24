@@ -168,6 +168,15 @@ async fn gateway_exposes_frontdoor_manifest_without_proxying_upstream() {
     assert!(owned_routes
         .iter()
         .any(|value| value == "/v1beta/files/{path...}"));
+    assert!(owned_routes
+        .iter()
+        .any(|value| value == "/v1internal:loadCodeAssist"));
+    assert!(owned_routes
+        .iter()
+        .any(|value| value == "/v1internal:fetchAvailableModels"));
+    assert!(owned_routes
+        .iter()
+        .any(|value| value == "/v1internal:streamGenerateContent"));
     assert_eq!(
         payload["rust_frontdoor"]["internal_gateway"]["status"],
         "rust_native_control_plane"

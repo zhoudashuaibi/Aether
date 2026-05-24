@@ -69,6 +69,14 @@ pub fn resolve_execution_runtime_stream_plan_kind(
         ));
     }
 
+    if route_family == Some("antigravity")
+        && route_kind == Some("stream_generate_content")
+        && *method == Method::POST
+        && path == "/v1internal:streamGenerateContent"
+    {
+        return Some(GEMINI_CLI_STREAM_PLAN_KIND);
+    }
+
     if route_family == Some("openai")
         && is_openai_responses_route_kind(route_kind)
         && *method == Method::POST
@@ -676,6 +684,32 @@ mod tests {
                 "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
             ),
             Some(GEMINI_CLI_STREAM_PLAN_KIND)
+        );
+    }
+
+    #[test]
+    fn resolves_antigravity_v1internal_stream_plan_kind_as_gemini_cli_stream() {
+        assert_eq!(
+            resolve_execution_runtime_stream_plan_kind(
+                Some("ai_public"),
+                Some("antigravity"),
+                Some("stream_generate_content"),
+                Some("bearer_like"),
+                &Method::POST,
+                "/v1internal:streamGenerateContent",
+            ),
+            Some(GEMINI_CLI_STREAM_PLAN_KIND)
+        );
+        assert_eq!(
+            resolve_execution_runtime_sync_plan_kind(
+                Some("ai_public"),
+                Some("antigravity"),
+                Some("stream_generate_content"),
+                Some("bearer_like"),
+                &Method::POST,
+                "/v1internal:streamGenerateContent",
+            ),
+            None
         );
     }
 

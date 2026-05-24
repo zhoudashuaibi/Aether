@@ -1950,6 +1950,127 @@ async fn gateway_executes_antigravity_gemini_cli_stream_via_local_decision_gate_
     assert_eq!(stored_candidates.len(), 1);
     assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Success);
 
+    *seen_execution_runtime.lock().expect("mutex should lock") = None;
+    let inbound_response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/v1internal:streamGenerateContent?alt=sse"
+        ))
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header("authorization", "Bearer google-antigravity-access-token")
+        .header("x-api-key", client_api_key)
+        .header("user-agent", "antigravity/cli/1.0.2 linux/arm64")
+        .header(
+            TRACE_ID_HEADER,
+            "trace-antigravity-v1internal-inbound-stream-456",
+        )
+        .json(&json!({
+            "project": "client-side-project-should-not-leak",
+            "requestId": "client-v1internal-request-456",
+            "model": "gemini-cli",
+            "userAgent": "antigravity",
+            "requestType": "checkpoint",
+            "request": {
+                "contents": [{
+                    "role": "user",
+                    "parts": [{"text": "checkpoint context"}]
+                }],
+                "generationConfig": {
+                    "temperature": 0.4,
+                    "thinkingConfig": {
+                        "includeThoughts": true
+                    }
+                },
+                "toolConfig": {
+                    "functionCallingConfig": {
+                        "mode": "NONE"
+                    }
+                }
+            }
+        }))
+        .send()
+        .await
+        .expect("inbound antigravity request should succeed");
+
+    let inbound_status = inbound_response.status();
+    let inbound_miss_reason = inbound_response
+        .headers()
+        .get(crate::constants::LOCAL_EXECUTION_RUNTIME_MISS_REASON_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("-")
+        .to_string();
+    let inbound_response_body = inbound_response.text().await.expect("body should read");
+    assert_eq!(
+        inbound_status,
+        StatusCode::OK,
+        "unexpected inbound antigravity response body: {inbound_response_body}; miss_reason={inbound_miss_reason}"
+    );
+    let inbound_response_text = strip_sse_keepalive_comments(&inbound_response_body);
+    let inbound_payload = inbound_response_text
+        .trim()
+        .strip_prefix("data: ")
+        .expect("response should start with sse data prefix");
+    let inbound_response_json: serde_json::Value =
+        serde_json::from_str(inbound_payload).expect("stream payload should parse");
+    assert_eq!(
+        inbound_response_json["_v1internal_response_id"],
+        "resp_antigravity_cli_local_stream_123"
+    );
+    assert_eq!(
+        inbound_response_json["candidates"][0]["content"]["parts"][0]["text"],
+        "Hello Antigravity Stream"
+    );
+
+    let seen_inbound_execution_runtime_request = seen_execution_runtime
+        .lock()
+        .expect("mutex should lock")
+        .clone()
+        .expect("inbound execution runtime stream should be captured");
+    assert_eq!(
+        seen_inbound_execution_runtime_request.trace_id,
+        "trace-antigravity-v1internal-inbound-stream-456"
+    );
+    assert_eq!(
+        seen_inbound_execution_runtime_request.url,
+        "https://antigravity.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+    );
+    assert_eq!(
+        seen_inbound_execution_runtime_request.authorization,
+        "Bearer refreshed-antigravity-cli-stream-access-token"
+    );
+    assert_eq!(
+        seen_inbound_execution_runtime_request.project,
+        "project-antigravity-stream-local-1"
+    );
+    assert_eq!(
+        seen_inbound_execution_runtime_request.request_id,
+        "client-v1internal-request-456"
+    );
+    assert_eq!(
+        seen_inbound_execution_runtime_request.model,
+        "claude-sonnet-4-5"
+    );
+    assert_eq!(
+        seen_inbound_execution_runtime_request.user_agent,
+        "antigravity"
+    );
+    assert_eq!(
+        seen_inbound_execution_runtime_request.request_type,
+        "checkpoint"
+    );
+    assert_eq!(seen_inbound_execution_runtime_request.contents_len, 1);
+    assert!((seen_inbound_execution_runtime_request.exact_temperature - 0.4).abs() < f64::EPSILON);
+    assert!(!seen_inbound_execution_runtime_request.request_has_model);
+
+    let inbound_stored_candidates = request_candidate_repository
+        .list_by_request_id("trace-antigravity-v1internal-inbound-stream-456")
+        .await
+        .expect("inbound request candidate trace should read");
+    assert_eq!(inbound_stored_candidates.len(), 1);
+    assert_eq!(
+        inbound_stored_candidates[0].status,
+        RequestCandidateStatus::Success
+    );
+
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(
         !*seen_report.lock().expect("mutex should lock"),

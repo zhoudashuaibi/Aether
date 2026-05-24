@@ -186,6 +186,9 @@ fn select_primary_credential(
     if signature.starts_with("gemini:") {
         return select_gemini_credential(bundle);
     }
+    if signature.starts_with("antigravity:") {
+        return select_antigravity_credential(bundle);
+    }
     if signature.starts_with("claude:") {
         return select_claude_messages_credential(bundle);
     }
@@ -194,6 +197,20 @@ fn select_primary_credential(
     }
 
     select_generic_credential(bundle)
+}
+
+fn select_antigravity_credential(
+    bundle: &GatewayCredentialBundle,
+) -> Option<GatewayPrimaryCredential> {
+    first_provider_api_key(
+        bundle,
+        &[
+            GatewayCredentialCarrier::XApiKey,
+            GatewayCredentialCarrier::ApiKey,
+        ],
+    )
+    .or_else(|| first_bearer_token(bundle))
+    .or_else(|| select_cookie_credential(bundle))
 }
 
 fn select_openai_credential(bundle: &GatewayCredentialBundle) -> Option<GatewayPrimaryCredential> {
@@ -455,6 +472,29 @@ mod tests {
             Some(GatewayPrimaryCredential::ProviderApiKey {
                 raw: "cli-token".to_string(),
                 carrier: GatewayCredentialCarrier::AuthorizationBearer,
+            })
+        );
+    }
+
+    #[test]
+    fn prefers_antigravity_aether_api_key_over_google_bearer() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            "Bearer google-oauth-access-token".parse().unwrap(),
+        );
+        headers.insert("x-api-key", "sk-aether-antigravity".parse().unwrap());
+
+        let extracted = extract_request_credentials(
+            &headers,
+            &uri("/v1internal:streamGenerateContent?alt=sse"),
+            "antigravity:v1internal",
+        );
+        assert_eq!(
+            extracted.primary,
+            Some(GatewayPrimaryCredential::ProviderApiKey {
+                raw: "sk-aether-antigravity".to_string(),
+                carrier: GatewayCredentialCarrier::XApiKey,
             })
         );
     }
