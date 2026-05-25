@@ -13,6 +13,7 @@ use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKe
 use aether_provider_pool::{
     grok_pool_tier_from_quota_bucket, grok_supported_quota_windows_for_tier,
 };
+use aether_scheduler_core::provider_key_circuit_payload_is_active_open_at;
 use serde_json::{json, Map, Value};
 use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -438,25 +439,51 @@ fn chatgpt_web_image_quota_limit(
     metadata: &Map<String, Value>,
     remaining: Option<f64>,
 ) -> Option<f64> {
+    let explicit_limit = metadata
+        .get("image_quota_total")
+        .and_then(admin_provider_quota_pure::coerce_json_f64)
+        .filter(|value| *value > 0.0);
     let plan_type = metadata
         .get("plan_type")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.to_ascii_lowercase());
-    if plan_type.as_deref() == Some("free") {
-        return Some(25.0);
-    }
-
-    let explicit_limit = metadata
-        .get("image_quota_total")
-        .and_then(admin_provider_quota_pure::coerce_json_f64)
-        .filter(|value| *value > 0.0);
+    let limit_source = metadata
+        .get("image_quota_limit_source")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     if let Some(limit) = explicit_limit {
-        return Some(limit);
+        if !chatgpt_web_image_quota_limit_is_legacy_free_default(
+            limit,
+            limit_source,
+            plan_type.as_deref(),
+            remaining,
+        ) {
+            return Some(limit);
+        }
     }
 
     remaining.filter(|value| *value > 0.0)
+}
+
+fn chatgpt_web_image_quota_limit_is_legacy_free_default(
+    limit: f64,
+    limit_source: Option<&str>,
+    plan_type: Option<&str>,
+    remaining: Option<f64>,
+) -> bool {
+    let plan_type_is_free = plan_type
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("free"));
+    if !plan_type_is_free || limit_source.is_some() {
+        return false;
+    }
+    if (limit - 25.0).abs() > f64::EPSILON {
+        return false;
+    }
+    remaining.is_none_or(|value| value < limit)
 }
 
 fn model_quota_window_snapshot(
@@ -1779,6 +1806,39 @@ pub(crate) fn provider_key_health_summary(
     bool,
     serde_json::Map<String, serde_json::Value>,
 ) {
+    provider_key_health_summary_with_circuit_predicate(key, |value| {
+        value
+            .get("open")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    })
+}
+
+pub(crate) fn provider_key_health_summary_at(
+    key: &StoredProviderCatalogKey,
+    now_unix_secs: u64,
+) -> (
+    f64,
+    i64,
+    Option<String>,
+    bool,
+    serde_json::Map<String, serde_json::Value>,
+) {
+    provider_key_health_summary_with_circuit_predicate(key, |value| {
+        provider_key_circuit_payload_is_active_open_at(value, now_unix_secs)
+    })
+}
+
+fn provider_key_health_summary_with_circuit_predicate(
+    key: &StoredProviderCatalogKey,
+    circuit_is_open: impl Fn(&serde_json::Value) -> bool,
+) -> (
+    f64,
+    i64,
+    Option<String>,
+    bool,
+    serde_json::Map<String, serde_json::Value>,
+) {
     let health_by_format = key
         .health_by_format
         .as_ref()
@@ -1820,12 +1880,7 @@ pub(crate) fn provider_key_health_summary(
         }
     }
 
-    let any_circuit_open = circuit_by_format.values().any(|value| {
-        value
-            .get("open")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-    });
+    let any_circuit_open = circuit_by_format.values().any(circuit_is_open);
 
     (
         if health_by_format.is_empty() {
@@ -1974,15 +2029,10 @@ pub(crate) fn build_admin_provider_key_response(
         last_failure_at,
         circuit_breaker_open,
         circuit_by_format,
-    ) = provider_key_health_summary(key);
+    ) = provider_key_health_summary_at(key, now_unix_secs);
     let circuit_sample = circuit_by_format
         .values()
-        .find(|value| {
-            value
-                .get("open")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-        })
+        .find(|value| provider_key_circuit_payload_is_active_open_at(value, now_unix_secs))
         .or_else(|| circuit_by_format.values().next());
     let is_adaptive = key.rpm_limit.is_none();
     let effective_limit = if is_adaptive {
@@ -2535,12 +2585,39 @@ mod tests {
         assert_eq!(quota.get("code"), Some(&json!("ok")));
         assert_eq!(quota.get("plan_type"), Some(&json!("free")));
         assert_eq!(quota.get("reset_at"), Some(&json!(1_778_157_172u64)));
-        assert_eq!(quota.get("usage_ratio"), Some(&json!(0.04)));
+        assert_eq!(quota.get("usage_ratio"), Some(&json!(0.0)));
         assert_eq!(window.get("code"), Some(&json!("image_gen")));
         assert_eq!(window.get("remaining_value"), Some(&json!(24.0)));
-        assert_eq!(window.get("limit_value"), Some(&json!(25.0)));
-        assert_eq!(window.get("used_value"), Some(&json!(1.0)));
-        assert_eq!(window.get("remaining_ratio"), Some(&json!(0.96)));
+        assert_eq!(window.get("limit_value"), Some(&json!(24.0)));
+        assert_eq!(window.get("used_value"), Some(&json!(0.0)));
+        assert_eq!(window.get("remaining_ratio"), Some(&json!(1.0)));
+    }
+
+    #[test]
+    fn provider_key_status_snapshot_payload_ignores_chatgpt_web_legacy_free_25_limit() {
+        let mut key = sample_catalog_key();
+        key.upstream_metadata = Some(json!({
+            "chatgpt_web": {
+                "updated_at": 1_778_067_246u64,
+                "plan_type": "free",
+                "image_quota_remaining": 19.0,
+                "image_quota_total": 25.0
+            }
+        }));
+
+        let payload = provider_key_status_snapshot_payload(&key, "chatgpt_web");
+        let window = payload
+            .get("quota")
+            .and_then(Value::as_object)
+            .and_then(|quota| quota.get("windows"))
+            .and_then(Value::as_array)
+            .and_then(|windows| windows.first())
+            .and_then(Value::as_object)
+            .expect("image quota window should exist");
+
+        assert_eq!(window.get("remaining_value"), Some(&json!(19.0)));
+        assert_eq!(window.get("limit_value"), Some(&json!(19.0)));
+        assert_eq!(window.get("used_value"), Some(&json!(0.0)));
     }
 
     #[test]

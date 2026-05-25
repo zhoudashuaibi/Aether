@@ -96,6 +96,7 @@ export interface UsersExportData {
   user_groups?: UserGroupExport[]
   users: UserExport[]
   standalone_keys?: StandaloneKeyExport[]
+  usage_aggregates?: UsageAggregateSnapshot
 }
 
 export interface AggregateExportData {
@@ -120,6 +121,7 @@ export interface UserGroupExport {
 }
 
 export interface UserExport {
+  id?: string
   email: string
   email_verified?: boolean
   username: string
@@ -144,6 +146,7 @@ export interface UserExport {
 }
 
 export interface UserApiKeyExport {
+  api_key_id?: string
   key?: string | null
   key_hash: string
   key_encrypted?: string | null
@@ -161,11 +164,75 @@ export interface UserApiKeyExport {
   expires_at?: string | null
   auto_delete_on_expiry?: boolean
   total_requests?: number
+  total_tokens?: number
   total_cost_usd?: number
 }
 
 // 独立余额 Key 导出结构（与 UserApiKeyExport 相同，但不包含 is_standalone）
 export type StandaloneKeyExport = Omit<UserApiKeyExport, 'is_standalone'>
+
+export interface StatsDailyAggregateExport {
+  date_unix_secs: number
+  total_requests: number
+  success_requests: number
+  error_requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  total_cost: number
+  actual_total_cost: number
+  is_complete: boolean
+  aggregated_at_unix_secs?: number | null
+}
+
+export interface StatsUserDailyAggregateExport {
+  user_id: string
+  username?: string | null
+  date_unix_secs: number
+  total_requests: number
+  success_requests: number
+  error_requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  total_cost: number
+}
+
+export interface StatsDailyApiKeyAggregateExport {
+  api_key_id: string
+  api_key_name?: string | null
+  date_unix_secs: number
+  total_requests: number
+  success_requests: number
+  error_requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  total_cost: number
+}
+
+export interface UsageAggregateSnapshot {
+  stats_daily?: StatsDailyAggregateExport[]
+  stats_user_daily?: StatsUserDailyAggregateExport[]
+  stats_daily_api_key?: StatsDailyApiKeyAggregateExport[]
+}
+
+export interface UsageAggregateImportCounter {
+  created: number
+  updated: number
+  skipped: number
+}
+
+export interface UsageAggregateImportSummary {
+  stats_daily: UsageAggregateImportCounter
+  stats_user_daily: UsageAggregateImportCounter
+  stats_daily_api_key: UsageAggregateImportCounter
+  skipped_unmapped_user_daily: number
+  skipped_unmapped_api_key_daily: number
+}
 
 export interface GlobalModelExport {
   name: string
@@ -522,6 +589,7 @@ export interface UsersImportResponse {
     users: { created: number; updated: number; skipped: number }
     api_keys: { created: number; updated?: number; skipped: number }
     standalone_keys?: { created: number; updated?: number; skipped: number }
+    usage_aggregates?: UsageAggregateImportSummary
     errors: string[]
   }
 }

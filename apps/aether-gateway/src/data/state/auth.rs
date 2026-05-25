@@ -1684,6 +1684,28 @@ impl GatewayDataState {
         }
     }
 
+    pub(crate) async fn set_api_key_usage_totals(
+        &self,
+        api_key_id: &str,
+        total_requests: u64,
+        total_tokens: u64,
+        total_cost_usd: f64,
+    ) -> Result<Option<StoredAuthApiKeyExportRecord>, DataLayerError> {
+        match &self.auth_api_key_writer {
+            Some(repository) => {
+                repository
+                    .set_api_key_usage_totals(
+                        api_key_id,
+                        total_requests,
+                        total_tokens,
+                        total_cost_usd,
+                    )
+                    .await
+            }
+            None => Ok(None),
+        }
+    }
+
     pub(crate) async fn set_standalone_api_key_feature_settings(
         &self,
         api_key_id: &str,

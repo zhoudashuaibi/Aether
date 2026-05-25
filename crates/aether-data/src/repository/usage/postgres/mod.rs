@@ -1827,11 +1827,39 @@ LIMIT 1
         .await
         .map_postgres_err()?;
 
-        row.map(|row| {
-            row.try_get::<DateTime<Utc>, _>("cutoff_date")
-                .map_postgres_err()
-        })
-        .transpose()
+        if let Some(row) = row {
+            return row
+                .try_get::<DateTime<Utc>, _>("cutoff_date")
+                .map(Some)
+                .map_postgres_err();
+        }
+
+        let row = sqlx::query(
+            r#"
+SELECT MAX(date) AS latest_date
+FROM (
+    SELECT MAX(date) AS date
+    FROM stats_daily
+    WHERE total_requests > 0
+       OR is_complete IS TRUE
+    UNION ALL
+    SELECT MAX(date) AS date
+    FROM stats_user_daily
+    WHERE total_requests > 0
+    UNION ALL
+    SELECT MAX(date) AS date
+    FROM stats_daily_api_key
+    WHERE total_requests > 0
+) AS imported_daily_aggregates
+"#,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_postgres_err()?;
+        let latest_date = row
+            .try_get::<Option<DateTime<Utc>>, _>("latest_date")
+            .map_postgres_err()?;
+        Ok(latest_date.map(|value| value + chrono::Duration::days(1)))
     }
 
     async fn read_stats_hourly_cutoff(&self) -> Result<Option<DateTime<Utc>>, DataLayerError> {
@@ -1867,9 +1895,22 @@ WHERE is_complete IS TRUE
 SELECT
   COALESCE(SUM(total_requests), 0)::BIGINT AS total_requests,
   COALESCE(SUM(input_tokens), 0)::BIGINT AS input_tokens,
-  COALESCE(SUM(effective_input_tokens), 0)::BIGINT AS effective_input_tokens,
+  COALESCE(SUM(
+    CASE
+      WHEN effective_input_tokens = 0 AND total_input_context = 0 AND input_tokens > 0
+      THEN input_tokens
+      ELSE effective_input_tokens
+    END
+  ), 0)::BIGINT AS effective_input_tokens,
   COALESCE(SUM(output_tokens), 0)::BIGINT AS output_tokens,
-  COALESCE(SUM(effective_input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)::BIGINT AS total_tokens,
+  COALESCE(SUM(
+    CASE
+      WHEN effective_input_tokens = 0 AND total_input_context = 0 AND input_tokens > 0
+      THEN input_tokens
+      ELSE effective_input_tokens
+    END
+    + output_tokens + cache_creation_tokens + cache_read_tokens
+  ), 0)::BIGINT AS total_tokens,
   COALESCE(SUM(cache_creation_tokens), 0)::BIGINT AS cache_creation_tokens,
   COALESCE(SUM(cache_read_tokens), 0)::BIGINT AS cache_read_tokens,
   COALESCE(SUM(total_input_context), 0)::BIGINT AS total_input_context,
@@ -1898,9 +1939,22 @@ WHERE user_id = $1
 SELECT
   COALESCE(SUM(total_requests), 0)::BIGINT AS total_requests,
   COALESCE(SUM(input_tokens), 0)::BIGINT AS input_tokens,
-  COALESCE(SUM(effective_input_tokens), 0)::BIGINT AS effective_input_tokens,
+  COALESCE(SUM(
+    CASE
+      WHEN effective_input_tokens = 0 AND total_input_context = 0 AND input_tokens > 0
+      THEN input_tokens
+      ELSE effective_input_tokens
+    END
+  ), 0)::BIGINT AS effective_input_tokens,
   COALESCE(SUM(output_tokens), 0)::BIGINT AS output_tokens,
-  COALESCE(SUM(effective_input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)::BIGINT AS total_tokens,
+  COALESCE(SUM(
+    CASE
+      WHEN effective_input_tokens = 0 AND total_input_context = 0 AND input_tokens > 0
+      THEN input_tokens
+      ELSE effective_input_tokens
+    END
+    + output_tokens + cache_creation_tokens + cache_read_tokens
+  ), 0)::BIGINT AS total_tokens,
   COALESCE(SUM(cache_creation_tokens), 0)::BIGINT AS cache_creation_tokens,
   COALESCE(SUM(cache_read_tokens), 0)::BIGINT AS cache_read_tokens,
   COALESCE(SUM(total_input_context), 0)::BIGINT AS total_input_context,
@@ -1924,6 +1978,75 @@ WHERE date >= $1
         };
 
         decode_dashboard_summary_row(&row)
+    }
+
+    async fn list_dashboard_daily_breakdown_from_daily_totals(
+        &self,
+        start_day_utc: DateTime<Utc>,
+        end_day_utc: DateTime<Utc>,
+        user_id: Option<&str>,
+    ) -> Result<Vec<StoredUsageDashboardDailyBreakdownRow>, DataLayerError> {
+        if start_day_utc >= end_day_utc {
+            return Ok(Vec::new());
+        }
+
+        let sql = if user_id.is_some() {
+            r#"
+SELECT
+  TO_CHAR(date, 'YYYY-MM-DD') AS date,
+  'aggregate'::TEXT AS model,
+  'aggregate'::TEXT AS provider,
+  COALESCE(SUM(total_requests), 0)::BIGINT AS requests,
+  COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)::BIGINT AS total_tokens,
+  COALESCE(SUM(total_cost), 0)::DOUBLE PRECISION AS total_cost_usd,
+  0::DOUBLE PRECISION AS response_time_sum_ms,
+  0::BIGINT AS response_time_samples
+FROM stats_user_daily
+WHERE user_id = $1
+  AND date >= $2
+  AND date < $3
+  AND total_requests > 0
+GROUP BY date
+ORDER BY date ASC
+"#
+        } else {
+            r#"
+SELECT
+  TO_CHAR(date, 'YYYY-MM-DD') AS date,
+  'aggregate'::TEXT AS model,
+  'aggregate'::TEXT AS provider,
+  COALESCE(SUM(total_requests), 0)::BIGINT AS requests,
+  COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)::BIGINT AS total_tokens,
+  COALESCE(SUM(total_cost), 0)::DOUBLE PRECISION AS total_cost_usd,
+  0::DOUBLE PRECISION AS response_time_sum_ms,
+  0::BIGINT AS response_time_samples
+FROM stats_daily
+WHERE date >= $1
+  AND date < $2
+  AND total_requests > 0
+GROUP BY date
+ORDER BY date ASC
+"#
+        };
+
+        let mut rows = if let Some(user_id) = user_id {
+            sqlx::query(sql)
+                .bind(user_id)
+                .bind(start_day_utc)
+                .bind(end_day_utc)
+                .fetch(&self.pool)
+        } else {
+            sqlx::query(sql)
+                .bind(start_day_utc)
+                .bind(end_day_utc)
+                .fetch(&self.pool)
+        };
+
+        let mut items = Vec::new();
+        while let Some(row) = rows.try_next().await.map_postgres_err()? {
+            items.push(decode_dashboard_daily_breakdown_row(&row)?);
+        }
+        Ok(items)
     }
 
     async fn summarize_dashboard_usage_raw(
@@ -4241,8 +4364,19 @@ ORDER BY date ASC, total_cost_usd DESC, model ASC, provider_name ASC
         };
 
         let mut items = Vec::new();
+        let mut detailed_dates = std::collections::BTreeSet::<String>::new();
         while let Some(row) = rows.try_next().await.map_postgres_err()? {
-            items.push(decode_dashboard_daily_breakdown_row(&row)?);
+            let item = decode_dashboard_daily_breakdown_row(&row)?;
+            detailed_dates.insert(item.date.clone());
+            items.push(item);
+        }
+        for item in self
+            .list_dashboard_daily_breakdown_from_daily_totals(start_day_utc, end_day_utc, user_id)
+            .await?
+        {
+            if !detailed_dates.contains(&item.date) {
+                items.push(item);
+            }
         }
         Ok(items)
     }
@@ -4350,12 +4484,53 @@ ORDER BY date ASC, total_cost_usd DESC, "usage".model ASC, "usage".provider_name
         Ok(items)
     }
 
+    async fn list_dashboard_daily_breakdown_aggregate_segments(
+        &self,
+        query: &UsageDashboardDailyBreakdownQuery,
+    ) -> Result<Vec<StoredUsageDashboardDailyBreakdownRow>, DataLayerError> {
+        let cutoff_utc = match self.read_stats_daily_cutoff_date().await {
+            Ok(value) => value,
+            Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err) => {
+                return Ok(Vec::new());
+            }
+            Err(err) => return Err(err),
+        };
+        let Some(cutoff_utc) = cutoff_utc else {
+            return Ok(Vec::new());
+        };
+        let start_utc = dashboard_unix_secs_to_utc(query.created_from_unix_secs);
+        let end_utc = dashboard_unix_secs_to_utc(query.created_until_unix_secs);
+        let split = split_dashboard_daily_aggregate_range(start_utc, end_utc, cutoff_utc);
+        let Some((aggregate_start, aggregate_end)) = split.aggregate else {
+            return Ok(Vec::new());
+        };
+
+        self.list_dashboard_daily_breakdown_from_daily_aggregates(
+            aggregate_start,
+            aggregate_end,
+            query.user_id.as_deref(),
+        )
+        .await
+    }
+
     pub async fn list_dashboard_daily_breakdown(
         &self,
         query: &UsageDashboardDailyBreakdownQuery,
     ) -> Result<Vec<StoredUsageDashboardDailyBreakdownRow>, DataLayerError> {
         if query.tz_offset_minutes != 0 {
-            return self.list_dashboard_daily_breakdown_raw(query).await;
+            let mut items = self
+                .list_dashboard_daily_breakdown_aggregate_segments(query)
+                .await?;
+            let mut aggregate_dates = items
+                .iter()
+                .map(|item| item.date.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            for item in self.list_dashboard_daily_breakdown_raw(query).await? {
+                if aggregate_dates.insert(item.date.clone()) {
+                    items.push(item);
+                }
+            }
+            return Ok(finalize_dashboard_daily_breakdown_rows(items));
         }
 
         let cutoff_utc = match self.read_stats_daily_cutoff_date().await {
@@ -7370,6 +7545,7 @@ ORDER BY api_key_id ASC
 
         let mut totals = std::collections::BTreeMap::<String, StoredUsageUserTotals>::new();
         if let Some(cutoff_utc) = self.read_stats_daily_cutoff_date().await? {
+            let mut summary_user_ids = std::collections::BTreeSet::<String>::new();
             let mut aggregate_rows = sqlx::query(
                 r#"
 SELECT
@@ -7392,6 +7568,50 @@ ORDER BY user_id ASC
 
             while let Some(row) = aggregate_rows.try_next().await.map_postgres_err()? {
                 let user_id = row.try_get::<String, _>("user_id").map_postgres_err()?;
+                let request_count = row
+                    .try_get::<i64, _>("request_count")
+                    .map_postgres_err()?
+                    .max(0) as u64;
+                let total_tokens = row
+                    .try_get::<i64, _>("total_tokens")
+                    .map_postgres_err()?
+                    .max(0) as u64;
+                summary_user_ids.insert(user_id.clone());
+                totals.insert(
+                    user_id.clone(),
+                    StoredUsageUserTotals {
+                        user_id,
+                        request_count,
+                        total_tokens,
+                    },
+                );
+            }
+
+            let mut daily_rows = sqlx::query(
+                r#"
+SELECT
+  user_id,
+  COALESCE(SUM(total_requests), 0)::BIGINT AS request_count,
+  COALESCE(
+    SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens),
+    0
+  )::BIGINT AS total_tokens
+FROM stats_user_daily
+WHERE user_id = ANY($1::TEXT[])
+  AND date < $2
+GROUP BY user_id
+ORDER BY user_id ASC
+"#,
+            )
+            .bind(user_ids)
+            .bind(cutoff_utc)
+            .fetch(&self.pool);
+
+            while let Some(row) = daily_rows.try_next().await.map_postgres_err()? {
+                let user_id = row.try_get::<String, _>("user_id").map_postgres_err()?;
+                if summary_user_ids.contains(&user_id) {
+                    continue;
+                }
                 let request_count = row
                     .try_get::<i64, _>("request_count")
                     .map_postgres_err()?

@@ -706,6 +706,19 @@ impl<'a> AdminAppState<'a> {
             .await
     }
 
+    pub(crate) async fn set_api_key_usage_totals(
+        &self,
+        api_key_id: &str,
+        total_requests: u64,
+        total_tokens: u64,
+        total_cost_usd: f64,
+    ) -> Result<Option<aether_data::repository::auth::StoredAuthApiKeyExportRecord>, GatewayError>
+    {
+        self.app
+            .set_api_key_usage_totals(api_key_id, total_requests, total_tokens, total_cost_usd)
+            .await
+    }
+
     pub(crate) async fn delete_user_api_key(
         &self,
         user_id: &str,

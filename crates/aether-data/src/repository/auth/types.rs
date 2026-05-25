@@ -691,6 +691,14 @@ pub trait AuthApiKeyWriteRepository: Send + Sync {
         feature_settings: Option<serde_json::Value>,
     ) -> Result<Option<StoredAuthApiKeyExportRecord>, crate::DataLayerError>;
 
+    async fn set_api_key_usage_totals(
+        &self,
+        api_key_id: &str,
+        total_requests: u64,
+        total_tokens: u64,
+        total_cost_usd: f64,
+    ) -> Result<Option<StoredAuthApiKeyExportRecord>, crate::DataLayerError>;
+
     async fn delete_user_api_key(
         &self,
         user_id: &str,

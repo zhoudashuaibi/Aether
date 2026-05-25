@@ -343,19 +343,13 @@ function getChatGPTWebQuotaText(quota: QuotaStatusSnapshot): string | null {
   if (!window) return normalizeText(quota.label)
 
   const remainingPercent = getQuotaWindowRemainingPercent(window)
-  if (typeof window.remaining_value === 'number' && typeof window.limit_value === 'number' && window.limit_value > 0 && window.remaining_value <= 0) {
-    return `生图剩余 ${formatQuotaValue(window.remaining_value)}/${formatQuotaValue(window.limit_value)}`
-  }
-  if (remainingPercent != null) {
-    if (typeof window.used_value === 'number' && typeof window.limit_value === 'number' && window.limit_value > 0) {
-      return `生图剩余 ${formatPercent(remainingPercent)} (${formatQuotaValue(window.used_value)}/${formatQuotaValue(window.limit_value)})`
-    }
-    return `生图剩余 ${formatPercent(remainingPercent)}`
-  }
-
   if (typeof window.remaining_value === 'number' && typeof window.limit_value === 'number' && window.limit_value > 0) {
     return `生图剩余 ${formatQuotaValue(window.remaining_value)}/${formatQuotaValue(window.limit_value)}`
   }
+  if (remainingPercent != null) {
+    return `生图剩余 ${formatPercent(remainingPercent)}`
+  }
+
   if (typeof window.remaining_value === 'number') {
     return `生图剩余 ${formatQuotaValue(window.remaining_value)}`
   }

@@ -1017,6 +1017,26 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
         Ok(Some(export.clone()))
     }
 
+    async fn set_api_key_usage_totals(
+        &self,
+        api_key_id: &str,
+        total_requests: u64,
+        total_tokens: u64,
+        total_cost_usd: f64,
+    ) -> Result<Option<StoredAuthApiKeyExportRecord>, DataLayerError> {
+        let mut index = self
+            .index
+            .write()
+            .expect("auth api key snapshot repository lock");
+        let Some(export) = index.export_by_api_key_id.get_mut(api_key_id) else {
+            return Ok(None);
+        };
+        export.total_requests = total_requests;
+        export.total_tokens = total_tokens;
+        export.total_cost_usd = total_cost_usd;
+        Ok(Some(export.clone()))
+    }
+
     async fn delete_user_api_key(
         &self,
         user_id: &str,

@@ -1043,6 +1043,7 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
         payload["users"][0]["group_names"],
         json!(["Restricted GPT"])
     );
+    assert_eq!(payload["users"][0]["id"], json!("user-1"));
     assert_eq!(payload["users"][0]["wallet"]["balance"], json!(12.5));
     assert_eq!(
         payload["users"][0]["wallet"]["recharge_balance"],
@@ -1064,6 +1065,10 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
         json!(false)
     );
     assert_eq!(
+        payload["users"][0]["api_keys"][0]["api_key_id"],
+        json!("key-user-1")
+    );
+    assert_eq!(
         payload["users"][0]["api_keys"][0]["total_tokens"],
         json!(420)
     );
@@ -1071,12 +1076,22 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
         payload["standalone_keys"][0]["key"],
         json!("ak-standalone-live-1")
     );
+    assert_eq!(
+        payload["standalone_keys"][0]["api_key_id"],
+        json!("key-standalone-1")
+    );
     assert_eq!(payload["standalone_keys"][0]["total_tokens"], json!(84));
     assert_eq!(
         payload["standalone_keys"][0]["wallet"]["unlimited"],
         json!(true)
     );
     assert_eq!(payload["standalone_keys"][0].get("is_standalone"), None,);
+    assert_eq!(payload["usage_aggregates"]["stats_daily"], json!([]));
+    assert_eq!(payload["usage_aggregates"]["stats_user_daily"], json!([]));
+    assert_eq!(
+        payload["usage_aggregates"]["stats_daily_api_key"],
+        json!([])
+    );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

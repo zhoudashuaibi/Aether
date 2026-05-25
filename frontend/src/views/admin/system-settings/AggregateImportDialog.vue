@@ -42,6 +42,9 @@
               <li v-if="aggregateImportPreview.user_data.standalone_keys?.length">
                 独立余额 Keys: {{ aggregateImportPreview.user_data.standalone_keys.length }} 个
               </li>
+              <li v-if="usageAggregatePreviewCounts.total > 0">
+                统计聚合: {{ usageAggregatePreviewCounts.total }} 行
+              </li>
             </ul>
           </div>
         </div>
@@ -84,7 +87,7 @@
       </div>
 
       <p class="text-xs text-muted-foreground">
-        注意：完整备份会先导入配置数据，再导入用户数据；文件包含用户、用户组、API Keys 与钱包快照，用户 API Keys 需要目标系统使用相同的 ENCRYPTION_KEY。
+        注意：完整备份会先导入配置数据，再导入用户数据；文件包含用户、用户组、API Keys、Key 用量、钱包快照与统计聚合。正常导出的 API Keys 会在导入时使用目标系统密钥重新加密；仅当备份中包含 key_encrypted 等未解密密文字段时，才需要目标系统使用兼容的 ENCRYPTION_KEY。
       </p>
 
       <div
@@ -149,6 +152,9 @@
             用户创建 {{ aggregateImportResult.users.stats.users.created }}，
             API Keys 创建 {{ aggregateImportResult.users.stats.api_keys.created }}，
             跳过 {{ aggregateImportResult.users.stats.users.skipped }} 个用户
+            <template v-if="usageAggregateResultText">
+              ，统计聚合 {{ usageAggregateResultText }}
+            </template>
           </p>
         </div>
       </div>
@@ -216,5 +222,37 @@ const warningMessages = computed(() => {
   const configErrors = props.aggregateImportResult.config.stats.errors.map((message) => `配置数据: ${message}`)
   const userErrors = props.aggregateImportResult.users.stats.errors.map((message) => `用户数据: ${message}`)
   return [...configErrors, ...userErrors]
+})
+
+const usageAggregatePreviewCounts = computed(() => {
+  const aggregates = props.aggregateImportPreview?.user_data.usage_aggregates
+  const statsDaily = aggregates?.stats_daily?.length ?? 0
+  const statsUserDaily = aggregates?.stats_user_daily?.length ?? 0
+  const statsDailyApiKey = aggregates?.stats_daily_api_key?.length ?? 0
+
+  return {
+    statsDaily,
+    statsUserDaily,
+    statsDailyApiKey,
+    total: statsDaily + statsUserDaily + statsDailyApiKey,
+  }
+})
+
+const usageAggregateResultText = computed(() => {
+  const aggregates = props.aggregateImportResult?.users.stats.usage_aggregates
+  if (!aggregates) return ''
+
+  const counters = [
+    aggregates.stats_daily,
+    aggregates.stats_user_daily,
+    aggregates.stats_daily_api_key,
+  ]
+  const created = counters.reduce((sum, item) => sum + item.created, 0)
+  const updated = counters.reduce((sum, item) => sum + item.updated, 0)
+  const skipped = counters.reduce((sum, item) => sum + item.skipped, 0)
+  const total = created + updated + skipped
+  if (total === 0) return ''
+
+  return `创建 ${created}，更新 ${updated}，跳过 ${skipped}`
 })
 </script>

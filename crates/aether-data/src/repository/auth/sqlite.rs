@@ -692,6 +692,34 @@ WHERE id = ?
         self.reload_export_by_id(api_key_id).await
     }
 
+    async fn set_api_key_usage_totals(
+        &self,
+        api_key_id: &str,
+        total_requests: u64,
+        total_tokens: u64,
+        total_cost_usd: f64,
+    ) -> Result<Option<StoredAuthApiKeyExportRecord>, DataLayerError> {
+        sqlx::query(
+            r#"
+UPDATE api_keys
+SET total_requests = ?,
+    total_tokens = ?,
+    total_cost_usd = ?,
+    updated_at = ?
+WHERE id = ?
+"#,
+        )
+        .bind(total_requests as i64)
+        .bind(total_tokens as i64)
+        .bind(total_cost_usd)
+        .bind(current_unix_secs() as i64)
+        .bind(api_key_id)
+        .execute(&self.pool)
+        .await
+        .map_sql_err()?;
+        self.reload_export_by_id(api_key_id).await
+    }
+
     async fn delete_user_api_key(
         &self,
         user_id: &str,

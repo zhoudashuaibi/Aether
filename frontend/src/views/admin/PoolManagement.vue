@@ -3700,7 +3700,7 @@ function getQuotaProgressLabel(label: string): string {
 }
 
 function getQuotaProgressCountdown(item: QuotaProgressItem) {
-  if (!['日', '5H', '周', 'Spark5H', 'Spark周', 'Auto', 'Fast', 'Expert', 'Heavy', 'Grok 4.3'].includes(item.label)) return null
+  if (!['日', '5H', '周', 'Spark5H', 'Spark周', 'Auto', 'Fast', 'Expert', 'Heavy', 'Grok 4.3', '生图'].includes(item.label)) return null
   if (item.resetAtSeconds == null && item.resetSeconds == null) return null
   return getCodexResetCountdown(
     item.resetAtSeconds,
@@ -4109,10 +4109,10 @@ function buildQuotaProgressItemsFromSnapshot(key: PoolKeyDetail): QuotaProgressI
     const remainingValue = typeof window?.remaining_value === 'number' ? window.remaining_value : null
     const limitValue = typeof window?.limit_value === 'number' ? window.limit_value : null
     const usedValue = typeof window?.used_value === 'number' ? window.used_value : null
-    const detail = usedValue != null && limitValue != null
-      ? `${formatQuotaValue(usedValue)}/${formatQuotaValue(limitValue)}`
-      : remainingValue != null && limitValue != null
-        ? `${formatQuotaValue(Math.max(limitValue - remainingValue, 0))}/${formatQuotaValue(limitValue)}`
+    const detail = remainingValue != null && limitValue != null
+      ? `${formatQuotaValue(remainingValue)}/${formatQuotaValue(limitValue)}`
+      : usedValue != null && limitValue != null
+        ? `${formatQuotaValue(Math.max(limitValue - usedValue, 0))}/${formatQuotaValue(limitValue)}`
         : remainingValue != null
           ? `剩余 ${formatQuotaValue(remainingValue)}`
           : undefined

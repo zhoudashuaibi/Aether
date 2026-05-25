@@ -206,6 +206,21 @@ pub fn build_chatgpt_web_image_request_body(
     if let Some(user) = request.user.as_ref() {
         body.insert("user".to_string(), Value::String(user.clone()));
     }
+    if let Some(quality) = request
+        .tool
+        .get("quality")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        body.insert("quality".to_string(), Value::String(quality.to_string()));
+    }
+    if let Some(partial_images) = request.tool.get("partial_images").and_then(Value::as_u64) {
+        body.insert(
+            "partial_images".to_string(),
+            Value::Number(Number::from(partial_images)),
+        );
+    }
     if let Some(output_format) = request
         .summary_json
         .get("output_format")
@@ -1591,6 +1606,28 @@ mod tests {
         )
         .expect("1024x1024 should pass");
         assert_eq!(by_size["size"], "1024x1024");
+    }
+
+    #[test]
+    fn chatgpt_web_preserves_quality_and_partial_images() {
+        let parts = request_parts("/v1/images/generations", Some("application/json"));
+        let body = build_chatgpt_web_image_request_body(
+            &parts,
+            &json!({
+                "model": "gpt-image-2",
+                "prompt": "draw",
+                "size": "1024x1024",
+                "quality": "high",
+                "partial_images": 2,
+                "output_format": "png"
+            }),
+            None,
+        )
+        .expect("request should pass");
+
+        assert_eq!(body["quality"], "high");
+        assert_eq!(body["partial_images"], 2);
+        assert_eq!(body["output_format"], "png");
     }
 
     #[test]

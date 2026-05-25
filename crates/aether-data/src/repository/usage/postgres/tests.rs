@@ -308,7 +308,9 @@ fn usage_sql_rebuild_matches_online_provider_key_usage_semantics() {
     assert!(super::REBUILD_PROVIDER_API_KEY_USAGE_STATS_SQL
         .contains("AND BTRIM(provider_api_key_id) <> ''"));
     assert!(super::REBUILD_PROVIDER_API_KEY_USAGE_STATS_SQL
-        .contains("AND status NOT IN ('pending', 'streaming')"));
+        .contains("WHEN status NOT IN ('pending', 'streaming')"));
+    assert!(super::REBUILD_PROVIDER_API_KEY_USAGE_STATS_SQL
+        .contains("WHEN status IN ('pending', 'streaming') THEN 0"));
 }
 
 #[test]
@@ -437,6 +439,30 @@ fn usage_sql_summarize_usage_daily_heatmap_supports_daily_aggregates() {
 }
 
 #[test]
+fn usage_sql_daily_cutoff_falls_back_to_imported_stats_daily() {
+    let source = include_str!("mod.rs");
+    assert!(source.contains("FROM stats_summary"));
+    assert!(source.contains("SELECT MAX(date) AS latest_date"));
+    assert!(source.contains("FROM stats_daily"));
+    assert!(source.contains("FROM stats_user_daily"));
+    assert!(source.contains("FROM stats_daily_api_key"));
+    assert!(source.contains("value + chrono::Duration::days(1)"));
+}
+
+#[test]
+fn usage_sql_dashboard_daily_breakdown_falls_back_to_daily_totals() {
+    let source = include_str!("mod.rs");
+    assert!(source.contains("list_dashboard_daily_breakdown_aggregate_segments"));
+    assert!(source.contains("list_dashboard_daily_breakdown_from_daily_totals"));
+    assert!(source.contains("'aggregate'::TEXT AS model"));
+    assert!(source.contains("FROM stats_daily"));
+    assert!(source.contains("FROM stats_user_daily"));
+    assert!(source.contains("detailed_dates.contains(&item.date)"));
+    assert!(source.contains("query.tz_offset_minutes != 0"));
+    assert!(source.contains("aggregate_dates.insert(item.date.clone())"));
+}
+
+#[test]
 fn usage_sql_summarize_usage_leaderboard_supports_daily_aggregates() {
     let source = include_str!("mod.rs");
     assert!(source.contains("summarize_usage_leaderboard_from_daily_aggregates"));
@@ -533,6 +559,9 @@ fn usage_sql_summarize_usage_totals_by_user_ids_supports_user_summary_aggregates
     let source = include_str!("mod.rs");
     assert!(source.contains("FROM stats_user_summary"));
     assert!(source.contains("all_time_input_tokens"));
+    assert!(source.contains("FROM stats_user_daily"));
+    assert!(source.contains("date < $2"));
+    assert!(source.contains("summary_user_ids.contains(&user_id)"));
 }
 
 #[test]

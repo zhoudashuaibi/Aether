@@ -212,7 +212,7 @@ mod tests {
     }
 
     #[test]
-    fn chatgpt_web_quota_metadata_enriches_auth_and_normalizes_free_limit() {
+    fn chatgpt_web_quota_metadata_enriches_auth_and_uses_first_remaining_as_limit() {
         let mut metadata = json!({
             "image_quota_remaining": 12,
         });
@@ -229,8 +229,8 @@ mod tests {
         assert_eq!(metadata["plan_type"], json!("free"));
         assert_eq!(metadata["email"], json!("user@example.com"));
         assert_eq!(metadata["account_id"], json!("acct-1"));
-        assert_eq!(metadata["image_quota_total"], json!(25.0));
-        assert_eq!(metadata["image_quota_used"], json!(13.0));
+        assert_eq!(metadata["image_quota_total"], json!(12.0));
+        assert_eq!(metadata["image_quota_used"], json!(0.0));
     }
 
     #[test]
@@ -250,6 +250,72 @@ mod tests {
 
         assert_eq!(metadata["image_quota_total"], json!(40.0));
         assert_eq!(metadata["image_quota_used"], json!(33.0));
+    }
+
+    #[test]
+    fn chatgpt_web_quota_metadata_does_not_preserve_legacy_free_25_limit() {
+        let mut metadata = json!({
+            "plan_type": "free",
+            "image_quota_remaining": 19,
+        });
+        normalize_chatgpt_web_image_quota_limit(
+            &mut metadata,
+            Some(&json!({
+                "chatgpt_web": {
+                    "plan_type": "free",
+                    "image_quota_total": 25
+                }
+            })),
+        );
+
+        assert_eq!(metadata["image_quota_total"], json!(19.0));
+        assert_eq!(metadata["image_quota_used"], json!(0.0));
+        assert_eq!(
+            metadata["image_quota_limit_source"],
+            json!("first_remaining")
+        );
+    }
+
+    #[test]
+    fn chatgpt_web_quota_metadata_ignores_upstream_free_25_default() {
+        let mut metadata = json!({
+            "plan_type": "free",
+            "image_quota_remaining": 19,
+            "image_quota_total": 25,
+        });
+        normalize_chatgpt_web_image_quota_limit(&mut metadata, None);
+
+        assert_eq!(metadata["image_quota_total"], json!(19.0));
+        assert_eq!(metadata["image_quota_used"], json!(0.0));
+        assert_eq!(
+            metadata["image_quota_limit_source"],
+            json!("first_remaining")
+        );
+    }
+
+    #[test]
+    fn chatgpt_web_quota_metadata_preserves_marked_free_first_limit() {
+        let mut metadata = json!({
+            "plan_type": "free",
+            "image_quota_remaining": 18,
+        });
+        normalize_chatgpt_web_image_quota_limit(
+            &mut metadata,
+            Some(&json!({
+                "chatgpt_web": {
+                    "plan_type": "free",
+                    "image_quota_total": 19,
+                    "image_quota_limit_source": "first_remaining"
+                }
+            })),
+        );
+
+        assert_eq!(metadata["image_quota_total"], json!(19.0));
+        assert_eq!(metadata["image_quota_used"], json!(1.0));
+        assert_eq!(
+            metadata["image_quota_limit_source"],
+            json!("first_remaining")
+        );
     }
 
     #[test]
