@@ -6294,6 +6294,76 @@ mod tests {
     }
 
     #[test]
+    fn gemini_request_adapter_preserves_combined_search_builtin_tool_fields() {
+        let cases = [
+            (
+                "current_snake",
+                json!({
+                    "google_search": {},
+                    "code_execution": {},
+                    "url_context": {},
+                    "retrieval": {
+                        "vertexAiSearch": {
+                            "datastore": "projects/p/locations/global/collections/default_collection/dataStores/d"
+                        }
+                    }
+                }),
+            ),
+            (
+                "legacy_snake",
+                json!({
+                    "google_search_retrieval": {
+                        "dynamic_retrieval_config": {
+                            "mode": "MODE_DYNAMIC",
+                            "dynamic_threshold": 0.7
+                        }
+                    },
+                    "code_execution": {},
+                    "url_context": {}
+                }),
+            ),
+        ];
+
+        for (name, tool) in cases {
+            let request = json!({
+                "model": "gemini-2.5-pro",
+                "contents": [{"role": "user", "parts": [{"text": "search with builtins"}]}],
+                "tools": [tool]
+            });
+
+            let canonical = from_gemini_to_canonical_request(
+                &request,
+                "/v1beta/models/gemini-2.5-pro:generateContent",
+            )
+            .unwrap_or_else(|| panic!("{name}: canonical request"));
+
+            let rebuilt =
+                canonical_to_gemini_request(&canonical, "gemini-upstream", false).unwrap();
+            let tools = rebuilt["tools"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{name}: tools array"));
+            assert!(
+                tools.iter().any(|tool| tool.get("googleSearch").is_some()),
+                "{name}: google search should be preserved"
+            );
+            assert!(
+                tools.iter().any(|tool| tool.get("codeExecution").is_some()),
+                "{name}: code execution should be preserved"
+            );
+            assert!(
+                tools.iter().any(|tool| tool.get("urlContext").is_some()),
+                "{name}: URL context should be preserved"
+            );
+            if name == "current_snake" {
+                assert!(
+                    tools.iter().any(|tool| tool.get("retrieval").is_some()),
+                    "{name}: unhandled retrieval should be preserved"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn gemini_response_adapter_preserves_thought_signature_tool_and_usage() {
         let response = json!({
             "responseId": "resp_123",
