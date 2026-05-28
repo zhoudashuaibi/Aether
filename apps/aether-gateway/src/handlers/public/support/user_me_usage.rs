@@ -29,6 +29,10 @@ use super::{
 
 const USERS_ME_USAGE_DATA_UNAVAILABLE_DETAIL: &str = "用户用量数据暂不可用";
 
+fn users_me_usage_server_now_unix_ms() -> u64 {
+    u64::try_from(Utc::now().timestamp_millis()).unwrap_or_default()
+}
+
 fn build_users_me_usage_reader_unavailable_response() -> Response<Body> {
     build_auth_error_response(
         http::StatusCode::SERVICE_UNAVAILABLE,
@@ -1071,6 +1075,7 @@ pub(super) async fn handle_users_me_usage_get(
         .flatten();
 
     let mut payload = json!({
+        "server_now_unix_ms": users_me_usage_server_now_unix_ms(),
         "total_requests": total_requests,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
@@ -1170,6 +1175,7 @@ pub(super) async fn handle_users_me_usage_active_get(
     };
 
     Json(json!({
+        "server_now_unix_ms": users_me_usage_server_now_unix_ms(),
         "requests": items
             .iter()
             .map(build_users_me_usage_active_payload)
@@ -1365,12 +1371,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
+    use chrono::Utc;
     use serde_json::json;
 
     use super::{
         build_users_me_usage_active_payload, build_users_me_usage_record_payload,
         users_me_usage_client_is_stream, users_me_usage_is_failed,
-        users_me_usage_upstream_is_stream,
+        users_me_usage_server_now_unix_ms, users_me_usage_upstream_is_stream,
     };
 
     fn sample_usage(status: &str) -> StoredRequestUsageAudit {
@@ -1413,6 +1420,17 @@ mod tests {
             Some(102),
         )
         .expect("usage should build")
+    }
+
+    #[test]
+    fn users_me_usage_server_now_unix_ms_uses_epoch_millis() {
+        let before = u64::try_from(Utc::now().timestamp_millis()).unwrap_or_default();
+        let value = users_me_usage_server_now_unix_ms();
+        let after = u64::try_from(Utc::now().timestamp_millis()).unwrap_or_default();
+
+        assert!(value >= before);
+        assert!(value <= after);
+        assert!(value > 1_000_000_000_000);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use aether_admin::observability::usage::{
     admin_usage_parse_limit, admin_usage_parse_offset, admin_usage_provider_key_name,
     admin_usage_record_json, build_admin_usage_active_requests_response,
     build_admin_usage_records_response, build_admin_usage_summary_stats_response_from_summary,
-    ADMIN_USAGE_DATA_UNAVAILABLE_DETAIL,
+    usage_server_now_unix_ms, ADMIN_USAGE_DATA_UNAVAILABLE_DETAIL,
 };
 use aether_data::repository::users::StoredUserSummary;
 use aether_data_contracts::repository::{
@@ -315,6 +315,7 @@ fn build_admin_usage_records_response_with_attempt_flags(
         .collect();
 
     Json(json!({
+        "server_now_unix_ms": usage_server_now_unix_ms(),
         "records": records,
         "total": total,
         "limit": limit,

@@ -21,6 +21,10 @@ use url::form_urlencoded;
 
 pub const ADMIN_USAGE_DATA_UNAVAILABLE_DETAIL: &str = "Admin usage data unavailable";
 
+pub fn usage_server_now_unix_ms() -> u64 {
+    u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or_default()
+}
+
 pub fn admin_usage_data_unavailable_response(detail: &'static str) -> Response<Body> {
     (
         http::StatusCode::SERVICE_UNAVAILABLE,
@@ -2275,7 +2279,11 @@ pub fn build_admin_usage_active_requests_response(
         })
         .collect();
 
-    Json(json!({ "requests": payload })).into_response()
+    Json(json!({
+        "server_now_unix_ms": usage_server_now_unix_ms(),
+        "requests": payload,
+    }))
+    .into_response()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2306,6 +2314,7 @@ pub fn build_admin_usage_records_response(
         .collect();
 
     Json(json!({
+        "server_now_unix_ms": usage_server_now_unix_ms(),
         "records": records,
         "total": total,
         "limit": limit,
@@ -2511,6 +2520,7 @@ mod tests {
         admin_usage_matches_search, admin_usage_matches_status, admin_usage_matches_username,
         admin_usage_record_json, admin_usage_resolve_request_capture_body,
         admin_usage_total_tokens, admin_usage_upstream_is_stream, build_admin_usage_detail_payload,
+        usage_server_now_unix_ms,
     };
     use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UsageBodyField};
 
@@ -2558,6 +2568,17 @@ mod tests {
             Some(102),
         )
         .expect("usage should build")
+    }
+
+    #[test]
+    fn usage_server_now_unix_ms_uses_epoch_millis() {
+        let before = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or_default();
+        let value = usage_server_now_unix_ms();
+        let after = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or_default();
+
+        assert!(value >= before);
+        assert!(value <= after);
+        assert!(value > 1_000_000_000_000);
     }
 
     #[test]
