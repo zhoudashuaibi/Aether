@@ -795,6 +795,10 @@ impl<'a> PoolKeyCursor<'a> {
             if self.skip_candidate_if_runtime_cooldown(&candidate).await {
                 continue;
             }
+            if candidate.orchestration.candidate_group_id.is_none() {
+                candidate.orchestration.candidate_group_id =
+                    Some(pool_cursor_candidate_group_id(&self.group));
+            }
             candidate.orchestration.pool_key_index = Some(self.next_pool_key_index);
             self.next_pool_key_index = self.next_pool_key_index.saturating_add(1);
             return Some(candidate);
@@ -1537,6 +1541,17 @@ fn pool_candidate_facts(candidate: &EligibleLocalExecutionCandidate) -> PoolCand
         key_id: candidate.candidate.key_id.clone(),
         key_internal_priority: candidate.candidate.key_internal_priority,
     }
+}
+
+fn pool_cursor_candidate_group_id(group: &EligibleLocalExecutionCandidate) -> String {
+    format!(
+        "provider={}|endpoint={}|model={}|selected_model={}|api_format={}|singleton_key=*",
+        group.candidate.provider_id,
+        group.candidate.endpoint_id,
+        group.candidate.model_id,
+        group.candidate.selected_provider_model_name,
+        group.provider_api_format,
+    )
 }
 
 fn pool_scheduling_config(
@@ -2813,6 +2828,12 @@ mod tests {
             .expect("cursor should skip disallowed pool key and return allowed key");
         assert_eq!(candidate.candidate.key_id, "key-b");
         assert_eq!(candidate.orchestration.pool_key_index, Some(0));
+        assert_eq!(
+            candidate.orchestration.candidate_group_id.as_deref(),
+            Some(
+                "provider=provider-pool|endpoint=endpoint-1|model=model-1|selected_model=gpt-5|api_format=openai:chat|singleton_key=*"
+            )
+        );
         assert_eq!(
             cursor
                 .skip_reason_counts

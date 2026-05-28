@@ -25,6 +25,19 @@
         <Button
           variant="ghost"
           size="icon"
+          data-usage-hide-unknown-toggle="mobile"
+          class="h-8 w-8 shrink-0 md:hidden"
+          :class="hideUnknownRecords ? 'text-primary' : ''"
+          :title="hideUnknownRecords ? '显示 unknown 请求' : '隐藏 unknown 请求'"
+          aria-label="隐藏 unknown 模型或提供商的请求"
+          :aria-pressed="hideUnknownRecords"
+          @click="$emit('update:hideUnknownRecords', !hideUnknownRecords)"
+        >
+          <EyeOff class="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
           class="h-8 w-8 shrink-0 md:hidden"
           :class="autoRefresh ? 'text-primary' : ''"
           :title="autoRefresh ? '点击关闭自动刷新' : '点击开启自动刷新'"
@@ -178,6 +191,19 @@
       <div class="hidden sm:block h-4 w-px bg-border" />
 
       <!-- 自动刷新按钮 -->
+      <Button
+        variant="ghost"
+        size="icon"
+        data-usage-hide-unknown-toggle="desktop"
+        class="hidden h-8 w-8 shrink-0 md:inline-flex"
+        :class="hideUnknownRecords ? 'text-primary' : ''"
+        :title="hideUnknownRecords ? '显示 unknown 请求' : '隐藏 unknown 请求'"
+        aria-label="隐藏 unknown 模型或提供商的请求"
+        :aria-pressed="hideUnknownRecords"
+        @click="$emit('update:hideUnknownRecords', !hideUnknownRecords)"
+      >
+        <EyeOff class="w-3.5 h-3.5" />
+      </Button>
       <Button
         variant="ghost"
         size="icon"
@@ -1028,7 +1054,7 @@ import {
   SortableTableHead,
   TableFilterMenu,
 } from '@/components/ui'
-import { RefreshCcw, Search, Shuffle } from 'lucide-vue-next'
+import { EyeOff, RefreshCcw, Search, Shuffle } from 'lucide-vue-next'
 import { formatTokens, formatCurrency } from '@/utils/format'
 import { getCacheCreationTokens, getCacheReadTokens, getEffectiveInputTokens } from '../token-normalization'
 import {
@@ -1114,6 +1140,7 @@ const props = defineProps<{
   pageSizeOptions: number[]
   // 自动刷新
   autoRefresh: boolean
+  hideUnknownRecords: boolean
 }>()
 
 const emit = defineEmits<{
@@ -1128,6 +1155,7 @@ const emit = defineEmits<{
   'update:currentPage': [value: number]
   'update:pageSize': [value: number]
   'update:autoRefresh': [value: boolean]
+  'update:hideUnknownRecords': [value: boolean]
   'refresh': []
   'showDetail': [id: string]
   'prefetchDetail': [id: string]
