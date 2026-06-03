@@ -84,6 +84,22 @@ impl StreamingStandardFormatMatrix {
         };
         let mut out = Vec::new();
         for frame in frames {
+            if let CanonicalStreamEvent::Finish {
+                finish_reason: Some(ref finish_reason),
+                ..
+            } = frame.event
+            {
+                if !canonical_stream_finish_reason_is_supported(finish_reason) {
+                    self.terminated = true;
+                    out.extend(client.emit_unsupported_finish_reason(finish_reason)?);
+                    break;
+                }
+            }
+            if matches!(&frame.event, CanonicalStreamEvent::UnknownEvent(_)) {
+                self.terminated = true;
+                out.extend(client.emit_unknown_event()?);
+                break;
+            }
             out.extend(client.emit(frame)?);
         }
         Ok(out)
@@ -386,6 +402,51 @@ impl ClientStreamEmitter {
             }
         }
     }
+
+    fn emit_unknown_event(&mut self) -> Result<Vec<u8>, AiSurfaceFinalizeError> {
+        let Some(error_body) = build_core_error_body_for_client_format(
+            self.api_format(),
+            "Unsupported provider stream event cannot be converted losslessly",
+            Some("unsupported_stream_event"),
+            LocalCoreSyncErrorKind::ServerError,
+        ) else {
+            return Ok(Vec::new());
+        };
+        self.emit_error(error_body)
+    }
+
+    fn emit_unsupported_finish_reason(
+        &mut self,
+        finish_reason: &str,
+    ) -> Result<Vec<u8>, AiSurfaceFinalizeError> {
+        let Some(error_body) = build_core_error_body_for_client_format(
+            self.api_format(),
+            &format!(
+                "Unsupported provider stream finish reason {finish_reason:?} cannot be converted losslessly"
+            ),
+            Some("unsupported_finish_reason"),
+            LocalCoreSyncErrorKind::ServerError,
+        ) else {
+            return Ok(Vec::new());
+        };
+        self.emit_error(error_body)
+    }
+
+    fn api_format(&self) -> &'static str {
+        match self {
+            ClientStreamEmitter::OpenAIChat(_) => "openai:chat",
+            ClientStreamEmitter::OpenAIResponses(_) => "openai:responses",
+            ClientStreamEmitter::Claude(_) => "claude:messages",
+            ClientStreamEmitter::Gemini(_) => "gemini:generate_content",
+        }
+    }
+}
+
+fn canonical_stream_finish_reason_is_supported(finish_reason: &str) -> bool {
+    matches!(
+        finish_reason.trim(),
+        "stop" | "length" | "tool_calls" | "function_call" | "content_filter"
+    )
 }
 
 fn build_client_error_body_for_line(report_context: &Value, line: &[u8]) -> Option<Value> {
@@ -848,6 +909,299 @@ mod tests {
                 .expect("finish should succeed")
                 .is_empty());
         }
+    }
+
+    #[test]
+    fn transforms_unknown_provider_stream_events_to_visible_client_errors() {
+        let cases = [
+            (
+                "openai:chat",
+                "data: {\"error\":",
+                "\"code\":\"unsupported_stream_event\"",
+            ),
+            (
+                "openai:responses",
+                "event: response.failed\n",
+                "\"code\":\"unsupported_stream_event\"",
+            ),
+            (
+                "claude:messages",
+                "event: error\n",
+                "\"code\":\"unsupported_stream_event\"",
+            ),
+            (
+                "gemini:generate_content",
+                "data: {\"error\":",
+                "\"status\":\"INTERNAL\"",
+            ),
+        ];
+
+        for (client_api_format, prefix, marker) in cases {
+            let mut report_context = report_context("openai:responses", client_api_format);
+            report_context["provider_stream_event_api_format"] = json!("openai:responses");
+            let mut matrix = StreamingStandardFormatMatrix::default();
+            let output = matrix
+                .transform_line(
+                    &report_context,
+                    data_line(json!({
+                        "type": "response.future.delta",
+                        "response": {
+                            "id": "resp_unknown_123",
+                            "model": "gpt-5.4",
+                        },
+                        "payload": {
+                            "kept": true,
+                        },
+                    })),
+                )
+                .expect("unknown provider event should fail closed visibly");
+            let sse = String::from_utf8(output).expect("sse should be utf8");
+
+            assert!(sse.contains(prefix), "{client_api_format}: {sse}");
+            assert!(
+                sse.contains("Unsupported provider stream event cannot be converted losslessly"),
+                "{client_api_format}: {sse}"
+            );
+            assert!(sse.contains(marker), "{client_api_format}: {sse}");
+            assert!(matrix
+                .finish(&report_context)
+                .expect("finish should succeed")
+                .is_empty());
+            assert!(matrix
+                .transform_line(
+                    &report_context,
+                    data_line(json!({
+                        "type": "response.output_text.delta",
+                        "response_id": "resp_unknown_123",
+                        "output_index": 0,
+                        "content_index": 0,
+                        "delta": "after",
+                    })),
+                )
+                .expect("terminated matrix should ignore later lines")
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn transforms_unknown_stream_finish_reasons_to_visible_client_errors() {
+        let cases = [
+            (
+                "openai:chat",
+                "data: {\"error\":",
+                "\"code\":\"unsupported_finish_reason\"",
+            ),
+            (
+                "openai:responses",
+                "event: response.failed\n",
+                "\"code\":\"unsupported_finish_reason\"",
+            ),
+            (
+                "claude:messages",
+                "event: error\n",
+                "\"code\":\"unsupported_finish_reason\"",
+            ),
+            (
+                "gemini:generate_content",
+                "data: {\"error\":",
+                "\"status\":\"INTERNAL\"",
+            ),
+        ];
+
+        for (client_api_format, prefix, marker) in cases {
+            let report_context = report_context("openai:chat", client_api_format);
+            let mut matrix = StreamingStandardFormatMatrix::default();
+            let output = matrix
+                .transform_line(
+                    &report_context,
+                    data_line(json!({
+                        "id": "chatcmpl_unknown_finish",
+                        "object": "chat.completion.chunk",
+                        "model": "gpt-5.4",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "future_reason"
+                        }],
+                        "usage": {
+                            "prompt_tokens": 1,
+                            "completion_tokens": 2,
+                            "total_tokens": 3
+                        }
+                    })),
+                )
+                .expect("unknown finish reason should fail closed visibly");
+            let sse = String::from_utf8(output).expect("sse should be utf8");
+
+            assert!(sse.contains(prefix), "{client_api_format}: {sse}");
+            assert!(
+                sse.contains("Unsupported provider stream finish reason"),
+                "{client_api_format}: {sse}"
+            );
+            assert!(sse.contains("future_reason"), "{client_api_format}: {sse}");
+            assert!(sse.contains(marker), "{client_api_format}: {sse}");
+            assert!(matrix
+                .finish(&report_context)
+                .expect("finish should succeed")
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn transforms_unmappable_gemini_stream_finish_reasons_to_visible_client_errors() {
+        let cases = [
+            (
+                "openai:chat",
+                "data: {\"error\":",
+                "\"code\":\"unsupported_finish_reason\"",
+            ),
+            (
+                "openai:responses",
+                "event: response.failed\n",
+                "\"code\":\"unsupported_finish_reason\"",
+            ),
+            (
+                "claude:messages",
+                "event: error\n",
+                "\"code\":\"unsupported_finish_reason\"",
+            ),
+            (
+                "gemini:generate_content",
+                "data: {\"error\":",
+                "\"status\":\"INTERNAL\"",
+            ),
+        ];
+
+        for (client_api_format, prefix, marker) in cases {
+            let report_context = report_context("gemini:generate_content", client_api_format);
+            let mut matrix = StreamingStandardFormatMatrix::default();
+            let output = matrix
+                .transform_line(
+                    &report_context,
+                    data_line(json!({
+                        "responseId": "gemini_unmappable_finish",
+                        "modelVersion": "gemini-2.5-pro",
+                        "candidates": [{
+                            "index": 0,
+                            "content": {
+                                "role": "model",
+                                "parts": [{"text": "partial"}]
+                            },
+                            "finishReason": "OTHER"
+                        }],
+                        "usageMetadata": {
+                            "promptTokenCount": 1,
+                            "candidatesTokenCount": 2,
+                            "totalTokenCount": 3
+                        }
+                    })),
+                )
+                .expect("unmappable Gemini finish reason should fail closed visibly");
+            let sse = String::from_utf8(output).expect("sse should be utf8");
+
+            assert!(sse.contains(prefix), "{client_api_format}: {sse}");
+            assert!(
+                sse.contains("Unsupported provider stream finish reason"),
+                "{client_api_format}: {sse}"
+            );
+            assert!(sse.contains("OTHER"), "{client_api_format}: {sse}");
+            assert!(sse.contains(marker), "{client_api_format}: {sse}");
+            assert!(matrix
+                .finish(&report_context)
+                .expect("finish should succeed")
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn transforms_unknown_claude_stream_stop_reasons_to_visible_client_errors() {
+        let cases = [
+            (
+                "openai:chat",
+                "data: {\"error\":",
+                "\"code\":\"unsupported_finish_reason\"",
+            ),
+            (
+                "openai:responses",
+                "event: response.failed\n",
+                "\"code\":\"unsupported_finish_reason\"",
+            ),
+            (
+                "claude:messages",
+                "event: error\n",
+                "\"code\":\"unsupported_finish_reason\"",
+            ),
+            (
+                "gemini:generate_content",
+                "data: {\"error\":",
+                "\"status\":\"INTERNAL\"",
+            ),
+        ];
+
+        for (client_api_format, prefix, marker) in cases {
+            let report_context = report_context("claude:messages", client_api_format);
+            let mut matrix = StreamingStandardFormatMatrix::default();
+            let output = matrix
+                .transform_line(
+                    &report_context,
+                    data_line(json!({
+                        "type": "message_delta",
+                        "delta": {
+                            "stop_reason": "future_reason"
+                        },
+                        "usage": {
+                            "input_tokens": 1,
+                            "output_tokens": 2
+                        }
+                    })),
+                )
+                .expect("unknown Claude stop reason should fail closed visibly");
+            let sse = String::from_utf8(output).expect("sse should be utf8");
+
+            assert!(sse.contains(prefix), "{client_api_format}: {sse}");
+            assert!(
+                sse.contains("Unsupported provider stream finish reason"),
+                "{client_api_format}: {sse}"
+            );
+            assert!(sse.contains("future_reason"), "{client_api_format}: {sse}");
+            assert!(sse.contains(marker), "{client_api_format}: {sse}");
+            assert!(matrix
+                .finish(&report_context)
+                .expect("finish should succeed")
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn openai_responses_client_emits_incomplete_for_length_finish_reason() {
+        let report_context = report_context("openai:chat", "openai:responses");
+        let mut matrix = StreamingStandardFormatMatrix::default();
+        let output = matrix
+            .transform_line(
+                &report_context,
+                data_line(json!({
+                    "id": "chatcmpl_length_finish",
+                    "object": "chat.completion.chunk",
+                    "model": "gpt-5.4",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "length"
+                    }],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 2,
+                        "total_tokens": 3
+                    }
+                })),
+            )
+            .expect("length finish reason should map to response.incomplete");
+        let sse = String::from_utf8(output).expect("sse should be utf8");
+
+        assert!(sse.contains("event: response.incomplete\n"));
+        assert!(sse.contains("\"status\":\"incomplete\""));
+        assert!(sse.contains("\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"));
+        assert!(!sse.contains("event: response.completed\n"));
     }
 
     #[test]

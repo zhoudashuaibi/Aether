@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::formats::openai::shared::map_thinking_budget_to_openai_reasoning_effort;
+use crate::formats::shared::model_directives::ReasoningEffort;
 use crate::formats::shared::response::remove_empty_pages_from_tool_input_value;
 
 pub use crate::protocol::stream::{CanonicalStreamEvent, CanonicalStreamFrame};
@@ -186,6 +187,8 @@ pub struct CanonicalToolDefinition {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parameters: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, Value>,
 }
@@ -3209,10 +3212,18 @@ pub(crate) fn claude_tools_to_canonical(
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned),
             parameters: tool_object.get("input_schema").cloned(),
-            extensions: claude_extensions(
-                tool_object,
-                &["type", "name", "description", "input_schema"],
-            ),
+            strict: None,
+            extensions: {
+                let mut extensions = claude_extensions(
+                    tool_object,
+                    &["type", "name", "description", "input_schema"],
+                );
+                if let Some(input_schema) = tool_object.get("input_schema").cloned() {
+                    canonical_extension_object_mut(&mut extensions, "claude")
+                        .insert("raw_input_schema".to_string(), input_schema);
+                }
+                extensions
+            },
         });
     }
     Some((canonical, builtin_tools, web_search_options))
@@ -3361,14 +3372,7 @@ pub(crate) fn claude_thinking_to_canonical(
 }
 
 pub(crate) fn claude_output_effort_to_openai_reasoning_effort(value: &str) -> Option<&'static str> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "low" => Some("low"),
-        "medium" => Some("medium"),
-        "high" => Some("high"),
-        "xhigh" => Some("xhigh"),
-        "max" => Some("max"),
-        _ => None,
-    }
+    ReasoningEffort::parse(value).map(ReasoningEffort::as_openai_chat_value)
 }
 
 pub(crate) fn canonical_openai_reasoning_effort(
@@ -3416,13 +3420,20 @@ pub(crate) fn gemini_thinking_to_canonical(
         .get("thinkingBudget")
         .or_else(|| thinking_config.get("thinking_budget"))
         .and_then(Value::as_u64);
+    let thinking_level = thinking_config
+        .get("thinkingLevel")
+        .or_else(|| thinking_config.get("thinking_level"))
+        .and_then(Value::as_str)
+        .and_then(ReasoningEffort::parse)
+        .map(ReasoningEffort::as_openai_chat_value);
     let mut extensions = BTreeMap::new();
     extensions.insert(
         "gemini".to_string(),
         json!({ "thinking_config": Value::Object(thinking_config.clone()) }),
     );
-    if let Some(reasoning_effort) =
-        budget_tokens.map(map_thinking_budget_to_openai_reasoning_effort)
+    if let Some(reasoning_effort) = budget_tokens
+        .map(map_thinking_budget_to_openai_reasoning_effort)
+        .or(thinking_level)
     {
         extensions.insert(
             "openai".to_string(),
@@ -3625,10 +3636,18 @@ pub(crate) fn gemini_tools_to_canonical(value: Option<&Value>) -> Option<GeminiC
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
                 parameters: declaration_object.get("parameters").cloned(),
-                extensions: gemini_extensions(
-                    declaration_object,
-                    &["name", "description", "parameters"],
-                ),
+                strict: None,
+                extensions: {
+                    let mut extensions = gemini_extensions(
+                        declaration_object,
+                        &["name", "description", "parameters"],
+                    );
+                    if let Some(parameters) = declaration_object.get("parameters").cloned() {
+                        canonical_extension_object_mut(&mut extensions, "gemini")
+                            .insert("raw_parameters".to_string(), parameters);
+                    }
+                    extensions
+                },
             });
         }
     }
@@ -3761,6 +3780,7 @@ pub(crate) fn openai_tools_to_canonical(
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
                 parameters: function.get("parameters").cloned(),
+                strict: function.get("strict").and_then(Value::as_bool),
                 extensions: openai_extensions(tool_object, &["type", "function"]),
             })
         })
@@ -3792,8 +3812,10 @@ pub(crate) fn openai_responses_tools_to_canonical(
                     .filter(|value| !value.is_empty())?;
                 let mut extensions =
                     openai_responses_extensions(tool_object, &["type", "function"]);
-                let function_extensions =
-                    openai_responses_extensions(function, &["name", "description", "parameters"]);
+                let function_extensions = openai_responses_extensions(
+                    function,
+                    &["name", "description", "parameters", "strict"],
+                );
                 merge_tool_extensions(&mut extensions, function_extensions);
                 canonical.push(CanonicalToolDefinition {
                     name: name.to_string(),
@@ -3802,6 +3824,7 @@ pub(crate) fn openai_responses_tools_to_canonical(
                         .and_then(Value::as_str)
                         .map(ToOwned::to_owned),
                     parameters: function.get("parameters").cloned(),
+                    strict: function.get("strict").and_then(Value::as_bool),
                     extensions,
                 });
                 continue;
@@ -3818,9 +3841,10 @@ pub(crate) fn openai_responses_tools_to_canonical(
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
                 parameters: tool_object.get("parameters").cloned(),
+                strict: tool_object.get("strict").and_then(Value::as_bool),
                 extensions: openai_responses_extensions(
                     tool_object,
-                    &["type", "name", "description", "parameters"],
+                    &["type", "name", "description", "parameters", "strict"],
                 ),
             });
         } else if tool_type == "custom" {
@@ -3853,6 +3877,7 @@ pub(crate) fn openai_responses_tools_to_canonical(
                 name: name.to_string(),
                 description,
                 parameters,
+                strict: tool_object.get("strict").and_then(Value::as_bool),
                 extensions: BTreeMap::from([(
                     OPENAI_RESPONSES_EXTENSION_NAMESPACE.to_string(),
                     tool.clone(),
@@ -3863,6 +3888,7 @@ pub(crate) fn openai_responses_tools_to_canonical(
                 name: tool_type,
                 description: None,
                 parameters: None,
+                strict: None,
                 extensions: BTreeMap::from([(
                     OPENAI_RESPONSES_EXTENSION_NAMESPACE.to_string(),
                     tool.clone(),
@@ -3897,6 +3923,9 @@ pub(crate) fn canonical_tool_to_openai(tool: &CanonicalToolDefinition) -> Value 
     }
     if let Some(parameters) = &tool.parameters {
         function.insert("parameters".to_string(), parameters.clone());
+    }
+    if let Some(strict) = tool.strict {
+        function.insert("strict".to_string(), Value::Bool(strict));
     }
     json!({
         "type": "function",
@@ -4428,9 +4457,18 @@ pub(crate) fn canonical_tools_to_claude(canonical: &CanonicalRequest) -> Vec<Val
             }
             out.insert(
                 "input_schema".to_string(),
-                claude_input_schema_from_tool_parameters(tool.parameters.as_ref()),
+                tool.extensions
+                    .get("claude")
+                    .and_then(Value::as_object)
+                    .and_then(|value| value.get("raw_input_schema"))
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        claude_input_schema_from_tool_parameters(tool.parameters.as_ref())
+                    }),
             );
-            out.extend(namespace_extension_object(&tool.extensions, "claude", &out));
+            let mut extra = namespace_extension_object(&tool.extensions, "claude", &out);
+            extra.remove("raw_input_schema");
+            out.extend(extra);
             Value::Object(out)
         })
         .collect::<Vec<_>>();
@@ -4912,9 +4950,15 @@ pub(crate) fn gemini_stop_reason_to_canonical(value: &str) -> Option<CanonicalSt
     Some(match value.trim().to_ascii_uppercase().as_str() {
         "STOP" => CanonicalStopReason::EndTurn,
         "MAX_TOKENS" => CanonicalStopReason::MaxTokens,
-        "SAFETY" | "RECITATION" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "SPII" => {
-            CanonicalStopReason::ContentFiltered
-        }
+        "SAFETY"
+        | "RECITATION"
+        | "LANGUAGE"
+        | "BLOCKLIST"
+        | "PROHIBITED_CONTENT"
+        | "SPII"
+        | "IMAGE_SAFETY"
+        | "IMAGE_PROHIBITED_CONTENT"
+        | "IMAGE_RECITATION" => CanonicalStopReason::ContentFiltered,
         "OTHER" => CanonicalStopReason::Unknown,
         _ => CanonicalStopReason::Unknown,
     })

@@ -2217,7 +2217,12 @@ impl OpenAIResponsesClientEmitter {
         Ok(out)
     }
 
-    fn completed_response(&self, usage: CanonicalUsage) -> Value {
+    fn terminal_response(
+        &self,
+        usage: CanonicalUsage,
+        status: &str,
+        incomplete_reason: Option<&str>,
+    ) -> Value {
         let mut ordered_output = Vec::new();
         let summary = if self.reasoning_summary_parts.is_empty() {
             if self.reasoning.trim().is_empty() {
@@ -2336,17 +2341,29 @@ impl OpenAIResponsesClientEmitter {
         }
         ordered_output.sort_by_key(|(output_index, _)| *output_index);
 
-        json!({
+        let mut response = json!({
             "id": self.response_id(),
             "object": "response",
-            "status": "completed",
+            "status": status,
             "model": self.model(),
             "output": ordered_output
                 .into_iter()
                 .map(|(_, item)| item)
                 .collect::<Vec<_>>(),
             "usage": openai_responses_usage_from_usage(&usage),
-        })
+        });
+        if let Some(reason) = incomplete_reason {
+            response["incomplete_details"] = json!({ "reason": reason });
+        }
+        response
+    }
+
+    fn completed_response(&self, usage: CanonicalUsage) -> Value {
+        self.terminal_response(usage, "completed", None)
+    }
+
+    fn incomplete_response(&self, usage: CanonicalUsage, reason: &str) -> Value {
+        self.terminal_response(usage, "incomplete", Some(reason))
     }
 
     pub fn emit(&mut self, frame: CanonicalStreamFrame) -> Result<Vec<u8>, AiSurfaceFinalizeError> {
@@ -2619,7 +2636,10 @@ impl OpenAIResponsesClientEmitter {
                 self.encode_response_event(event.as_str(), payload)
             }
             CanonicalStreamEvent::UnknownEvent(_) => Ok(Vec::new()),
-            CanonicalStreamEvent::Finish { usage, .. } => {
+            CanonicalStreamEvent::Finish {
+                finish_reason,
+                usage,
+            } => {
                 if self.finished {
                     return Ok(Vec::new());
                 }
@@ -2629,11 +2649,22 @@ impl OpenAIResponsesClientEmitter {
                 out.extend(self.finish_tool_items()?);
                 out.extend(self.finish_tool_result_items()?);
                 let usage = usage.unwrap_or_default();
+                let (event_type, response) = match finish_reason.as_deref() {
+                    Some("length") => (
+                        "response.incomplete",
+                        self.incomplete_response(usage, "max_output_tokens"),
+                    ),
+                    Some("content_filter") => (
+                        "response.incomplete",
+                        self.incomplete_response(usage, "content_filter"),
+                    ),
+                    _ => ("response.completed", self.completed_response(usage)),
+                };
                 out.extend(self.encode_response_event(
-                    "response.completed",
+                    event_type,
                     json!({
-                        "type": "response.completed",
-                        "response": self.completed_response(usage),
+                        "type": event_type,
+                        "response": response,
                     }),
                 )?);
                 self.finished = true;

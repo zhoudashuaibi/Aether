@@ -4,7 +4,9 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     formats::context::FormatContext,
-    formats::openai::shared::map_thinking_budget_to_openai_reasoning_effort,
+    formats::openai::shared::{
+        map_thinking_budget_to_openai_reasoning_effort, OpenAiReasoningEffort,
+    },
     protocol::canonical::{
         canonical_response_format_to_openai, canonicalize_tool_arguments,
         is_claude_messages_request, is_claude_system_instruction, is_claude_thinking_block,
@@ -182,6 +184,10 @@ pub fn to_raw(
         output.insert("reasoning".to_string(), reasoning);
     }
 
+    output.extend(chat_openai_extension_object_to_responses(
+        &canonical.extensions,
+        &output,
+    ));
     output.extend(namespace_extension_object(
         &canonical.extensions,
         OPENAI_RESPONSES_EXTENSION_NAMESPACE,
@@ -198,6 +204,33 @@ pub fn to_raw(
     }
     output.remove("verbosity");
     Some(Value::Object(output))
+}
+
+fn chat_openai_extension_object_to_responses(
+    extensions: &BTreeMap<String, Value>,
+    existing: &Map<String, Value>,
+) -> Map<String, Value> {
+    const RESPONSES_COMPATIBLE_CHAT_FIELDS: &[&str] = &[
+        "stream",
+        "store",
+        "service_tier",
+        "safety_identifier",
+        "prompt_cache_key",
+    ];
+    extensions
+        .get("openai")
+        .and_then(Value::as_object)
+        .map(|object| {
+            object
+                .iter()
+                .filter(|(key, _)| {
+                    RESPONSES_COMPATIBLE_CHAT_FIELDS.contains(&key.as_str())
+                        && !existing.contains_key(*key)
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn canonical_instructions_to_responses(canonical: &CanonicalRequest) -> Option<Value> {
@@ -582,7 +615,7 @@ fn canonical_reasoning_config_to_responses(canonical: &CanonicalRequest) -> Opti
         .and_then(|value| value.get("output_config"))
         .and_then(|value| value.get("effort"))
         .and_then(Value::as_str)
-        .map(openai_responses_reasoning_effort)
+        .and_then(openai_responses_reasoning_effort)
         .unwrap_or("medium");
     object
         .entry("effort".to_string())
@@ -608,10 +641,11 @@ fn reasoning_config_to_responses(thinking: &CanonicalThinkingConfig) -> Option<V
                 .get("openai")
                 .and_then(|value| value.get("reasoning_effort"))
                 .and_then(Value::as_str)
-                .map(|effort| {
-                    json!({
-                        "effort": openai_responses_reasoning_effort(effort),
-                    })
+                .and_then(|effort| {
+                    let effort = openai_responses_reasoning_effort(effort)?;
+                    Some(json!({
+                        "effort": effort,
+                    }))
                 })
         })
         .or_else(|| {
@@ -623,13 +657,10 @@ fn reasoning_config_to_responses(thinking: &CanonicalThinkingConfig) -> Option<V
         })
 }
 
-fn openai_responses_reasoning_effort(effort: &str) -> &str {
+fn openai_responses_reasoning_effort(effort: &str) -> Option<&'static str> {
     match effort.trim().to_ascii_lowercase().as_str() {
-        "xhigh" | "max" => "xhigh",
-        "low" => "low",
-        "medium" => "medium",
-        "high" => "high",
-        _ => effort,
+        "max" => Some("xhigh"),
+        value => OpenAiReasoningEffort::parse(value).map(OpenAiReasoningEffort::as_str),
     }
 }
 
@@ -694,6 +725,9 @@ fn canonical_tool_to_responses(tool: &CanonicalToolDefinition) -> Value {
         "parameters".to_string(),
         responses_tool_parameters_schema(tool.parameters.as_ref()),
     );
+    if let Some(strict) = tool.strict {
+        out.insert("strict".to_string(), Value::Bool(strict));
+    }
     out.extend(namespace_extension_object(
         &tool.extensions,
         OPENAI_RESPONSES_EXTENSION_NAMESPACE,

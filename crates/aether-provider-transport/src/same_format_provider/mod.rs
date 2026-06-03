@@ -188,13 +188,13 @@ pub fn build_same_format_provider_request_body(
                 .map(|(key, value)| (key.clone(), value.clone())),
         )
     } else {
-        aether_ai_formats::convert_request(
+        aether_ai_formats::convert_request_pure(
             input.client_api_format,
             input.provider_api_format,
             input.body_json,
-            &aether_ai_formats::FormatContext::default().with_mapped_model(input.mapped_model),
         )
         .ok()?
+        .value
         .as_object()?
         .clone()
     };
@@ -880,6 +880,61 @@ mod tests {
 
         assert_eq!(body.get("model"), Some(&json!("upstream-model")));
         assert_eq!(body.get("stream"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn same_format_standard_body_preserves_fields_that_cross_format_would_block() {
+        let body = build_same_format_provider_request_body(SameFormatProviderRequestBodyInput {
+            body_json: &json!({
+                "model": "client-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "n": 2,
+                "reasoning_effort": "max",
+                "unknown_vendor_field": {"keep": true}
+            }),
+            mapped_model: "client-model",
+            client_api_format: "openai:chat",
+            provider_api_format: "/v1/chat/completions",
+            source_model: Some("client-model"),
+            family: SameFormatProviderFamily::Standard,
+            body_rules: None,
+            request_headers: None,
+            upstream_is_stream: false,
+            force_body_stream_field: false,
+            kiro_auth_config: None,
+            is_claude_code: false,
+            enable_model_directives: false,
+        })
+        .expect("same-format body should bypass canonical conversion");
+
+        assert_eq!(body["n"], 2);
+        assert_eq!(body["reasoning_effort"], "max");
+        assert_eq!(body["unknown_vendor_field"]["keep"], true);
+    }
+
+    #[test]
+    fn cross_format_standard_body_fails_closed_for_lossy_chat_fields() {
+        let body = build_same_format_provider_request_body(SameFormatProviderRequestBodyInput {
+            body_json: &json!({
+                "model": "client-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "n": 2
+            }),
+            mapped_model: "upstream-model",
+            client_api_format: "openai:chat",
+            provider_api_format: "openai:responses",
+            source_model: Some("client-model"),
+            family: SameFormatProviderFamily::Standard,
+            body_rules: None,
+            request_headers: None,
+            upstream_is_stream: false,
+            force_body_stream_field: false,
+            kiro_auth_config: None,
+            is_claude_code: false,
+            enable_model_directives: false,
+        });
+
+        assert!(body.is_none());
     }
 
     #[test]

@@ -352,6 +352,7 @@ fn canonical_block_to_gemini_part(
             ..
         } => Some(Some(json!({
             "functionResponse": {
+                "id": tool_use_id,
                 "name": name.clone()
                     .or_else(|| tool_name_by_id.get(tool_use_id).cloned())
                     .unwrap_or_else(|| tool_use_id.clone()),
@@ -676,12 +677,21 @@ fn canonical_tool_to_gemini_declaration(tool: &CanonicalToolDefinition) -> Value
             Value::String(description.clone()),
         );
     }
+    let raw_parameters = tool
+        .extensions
+        .get("gemini")
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("raw_parameters"))
+        .cloned();
     declaration.insert(
         "parameters".to_string(),
-        tool.parameters
+        raw_parameters
             .clone()
+            .or_else(|| tool.parameters.clone())
             .map(|mut schema| {
-                clean_gemini_schema(&mut schema);
+                if raw_parameters.is_none() {
+                    clean_gemini_schema(&mut schema);
+                }
                 schema
             })
             .unwrap_or_else(|| json!({})),
@@ -808,7 +818,7 @@ mod tests {
     use crate::CanonicalContentBlock;
 
     #[test]
-    fn canonical_tool_result_to_gemini_request_omits_function_response_id() {
+    fn canonical_tool_result_to_gemini_request_preserves_function_response_id() {
         let mut tool_name_by_id = BTreeMap::new();
         tool_name_by_id.insert("call_1".to_string(), "lookup".to_string());
 
@@ -831,7 +841,7 @@ mod tests {
             .and_then(Value::as_object)
             .expect("functionResponse should exist");
 
-        assert!(!function_response.contains_key("id"));
+        assert_eq!(function_response["id"], "call_1");
         assert_eq!(function_response["name"], "lookup");
         assert_eq!(
             function_response["response"],

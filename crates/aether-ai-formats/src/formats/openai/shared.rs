@@ -2,6 +2,41 @@ use serde_json::{Map, Value};
 
 use crate::formats::shared::model_directives::ReasoningEffort;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenAiReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+}
+
+impl OpenAiReasoningEffort {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "none" => Some(Self::None),
+            "minimal" => Some(Self::Minimal),
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "xhigh" => Some(Self::XHigh),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+        }
+    }
+}
+
 pub fn parse_openai_stop_sequences(stop: Option<&Value>) -> Option<Vec<Value>> {
     match stop {
         Some(Value::String(value)) if !value.trim().is_empty() => {

@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::{
     formats::context::FormatContext,
@@ -103,7 +103,6 @@ pub fn from_raw(body_json: &Value) -> Option<CanonicalRequest> {
             "top_p",
             "top_k",
             "stop",
-            "stream",
             "tools",
             "tool_choice",
             "parallel_tool_calls",
@@ -206,17 +205,47 @@ pub fn to_raw(canonical: &CanonicalRequest) -> Value {
         "openai",
         &output,
     ));
-    output.extend(namespace_extension_object(
+    output.extend(chat_compatible_responses_extension_object(
         &canonical.extensions,
         OPENAI_RESPONSES_EXTENSION_NAMESPACE,
         &output,
     ));
-    output.extend(namespace_extension_object(
+    output.extend(chat_compatible_responses_extension_object(
         &canonical.extensions,
         OPENAI_RESPONSES_LEGACY_EXTENSION_NAMESPACE,
         &output,
     ));
     Value::Object(output)
+}
+
+fn chat_compatible_responses_extension_object(
+    extensions: &std::collections::BTreeMap<String, Value>,
+    namespace: &str,
+    existing: &Map<String, Value>,
+) -> Map<String, Value> {
+    const CHAT_COMPATIBLE_RESPONSES_FIELDS: &[&str] = &[
+        "stream",
+        "stream_options",
+        "verbosity",
+        "store",
+        "service_tier",
+        "safety_identifier",
+        "prompt_cache_key",
+    ];
+    extensions
+        .get(namespace)
+        .and_then(Value::as_object)
+        .map(|object| {
+            object
+                .iter()
+                .filter(|(key, _)| {
+                    CHAT_COMPATIBLE_RESPONSES_FIELDS.contains(&key.as_str())
+                        && !existing.contains_key(*key)
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn force_stream_options(body: &mut Value, upstream_is_stream: bool) {

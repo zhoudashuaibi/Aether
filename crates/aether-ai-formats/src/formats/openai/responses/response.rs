@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     formats::context::FormatContext,
     protocol::canonical::{
-        canonical_content_block_to_openai_responses_part,
+        canonical_content_block_to_openai_responses_part, canonical_extension_object_mut,
         canonical_usage_to_openai_responses_usage, canonicalize_tool_arguments,
         flush_openai_responses_message_item, namespace_extension_object,
         openai_responses_extensions, openai_responses_output_to_canonical_blocks,
@@ -42,11 +42,19 @@ pub fn from_raw(body_json: &Value) -> Option<CanonicalResponse> {
         Some(CanonicalStopReason::ToolUse)
     } else {
         match body.get("status").and_then(Value::as_str) {
-            Some("incomplete") => Some(CanonicalStopReason::MaxTokens),
+            Some("incomplete") => Some(openai_responses_incomplete_stop_reason(body)),
             Some("failed") => Some(CanonicalStopReason::Unknown),
             _ => Some(CanonicalStopReason::EndTurn),
         }
     };
+    let mut extensions = openai_responses_extensions(
+        body,
+        &["id", "object", "model", "output", "usage", "status"],
+    );
+    if let Some(raw_status) = body.get("status").cloned() {
+        canonical_extension_object_mut(&mut extensions, OPENAI_RESPONSES_EXTENSION_NAMESPACE)
+            .insert("raw_status".to_string(), raw_status);
+    }
     Some(CanonicalResponse {
         id: body
             .get("id")
@@ -68,11 +76,21 @@ pub fn from_raw(body_json: &Value) -> Option<CanonicalResponse> {
         content,
         stop_reason,
         usage: openai_usage_to_canonical(body.get("usage")),
-        extensions: openai_responses_extensions(
-            body,
-            &["id", "object", "model", "output", "usage", "status"],
-        ),
+        extensions,
     })
+}
+
+fn openai_responses_incomplete_stop_reason(body: &Map<String, Value>) -> CanonicalStopReason {
+    match body
+        .get("incomplete_details")
+        .and_then(Value::as_object)
+        .and_then(|details| details.get("reason"))
+        .and_then(Value::as_str)
+    {
+        Some("content_filter") => CanonicalStopReason::ContentFiltered,
+        Some("tool_calls") | Some("function_call") => CanonicalStopReason::ToolUse,
+        _ => CanonicalStopReason::MaxTokens,
+    }
 }
 
 pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, _compact: bool) -> Value {
@@ -82,6 +100,20 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, _compact: b
     response.insert("object".to_string(), Value::String("response".to_string()));
     response.insert("status".to_string(), Value::String("completed".to_string()));
     response.insert("model".to_string(), Value::String(canonical.model.clone()));
+    if let Some(raw_status) = canonical
+        .extensions
+        .get(OPENAI_RESPONSES_EXTENSION_NAMESPACE)
+        .or_else(|| {
+            canonical
+                .extensions
+                .get(OPENAI_RESPONSES_LEGACY_EXTENSION_NAMESPACE)
+        })
+        .and_then(Value::as_object)
+        .and_then(|openai| openai.get("raw_status"))
+        .cloned()
+    {
+        response.insert("status".to_string(), raw_status);
+    }
 
     let mut output = Vec::new();
     let mut message_content = Vec::new();
@@ -272,16 +304,20 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, _compact: b
             response.insert("service_tier".to_string(), service_tier);
         }
     }
-    response.extend(namespace_extension_object(
+    let mut extension_fields = namespace_extension_object(
         &canonical.extensions,
         OPENAI_RESPONSES_EXTENSION_NAMESPACE,
         &response,
-    ));
-    response.extend(namespace_extension_object(
+    );
+    extension_fields.remove("raw_status");
+    response.extend(extension_fields);
+    let mut legacy_extension_fields = namespace_extension_object(
         &canonical.extensions,
         OPENAI_RESPONSES_LEGACY_EXTENSION_NAMESPACE,
         &response,
-    ));
+    );
+    legacy_extension_fields.remove("raw_status");
+    response.extend(legacy_extension_fields);
     Value::Object(response)
 }
 
