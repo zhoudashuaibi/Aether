@@ -9,12 +9,13 @@ use crate::{
     formats::context::FormatContext,
     protocol::canonical::{
         canonical_content_block_to_openai_responses_part, canonical_extension_object_mut,
-        canonical_usage_to_openai_responses_usage, canonicalize_tool_arguments,
-        flush_openai_responses_message_item, is_openai_thinking_block, namespace_extension_object,
-        openai_responses_extensions, openai_responses_output_to_canonical_blocks,
-        openai_usage_to_canonical, CanonicalContentBlock, CanonicalResponse,
-        CanonicalResponseOutput, CanonicalRole, CanonicalStopReason,
-        OPENAI_RESPONSES_EXTENSION_NAMESPACE, OPENAI_RESPONSES_LEGACY_EXTENSION_NAMESPACE,
+        canonical_tool_use_to_openai_responses_item, canonical_usage_to_openai_responses_usage,
+        flush_openai_responses_message_item, is_openai_responses_raw_block,
+        is_openai_thinking_block, namespace_extension_object, openai_responses_extensions,
+        openai_responses_output_to_canonical_blocks, openai_usage_to_canonical,
+        CanonicalContentBlock, CanonicalResponse, CanonicalResponseOutput, CanonicalRole,
+        CanonicalStopReason, OPENAI_RESPONSES_EXTENSION_NAMESPACE,
+        OPENAI_RESPONSES_LEGACY_EXTENSION_NAMESPACE,
     },
 };
 
@@ -199,7 +200,10 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, _compact: b
                 output.push(Value::Object(item));
             }
             CanonicalContentBlock::ToolUse {
-                id, name, input, ..
+                id,
+                name,
+                input,
+                extensions,
             } => {
                 flush_openai_responses_message_item(
                     &mut output,
@@ -218,13 +222,9 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, _compact: b
                         },
                     }));
                 } else {
-                    output.push(json!({
-                        "type": "function_call",
-                        "id": id,
-                        "call_id": id,
-                        "name": name,
-                        "arguments": canonicalize_tool_arguments(input),
-                    }));
+                    output.push(canonical_tool_use_to_openai_responses_item(
+                        id, name, input, extensions,
+                    ));
                 }
             }
             CanonicalContentBlock::ToolResult {
@@ -232,6 +232,7 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, _compact: b
                 output: result_output,
                 content_text,
                 is_error,
+                extensions,
                 ..
             } => {
                 flush_openai_responses_message_item(
@@ -243,7 +244,11 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, _compact: b
                 let mut item = Map::new();
                 item.insert(
                     "type".to_string(),
-                    Value::String("function_call_output".to_string()),
+                    Value::String(
+                        responses_tool_result_item_type(extensions)
+                            .unwrap_or("function_call_output")
+                            .to_string(),
+                    ),
                 );
                 item.insert("call_id".to_string(), Value::String(tool_use_id.clone()));
                 item.insert(
@@ -268,6 +273,19 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, _compact: b
                         }));
                     }
                 }
+            }
+            CanonicalContentBlock::Unknown {
+                payload,
+                extensions,
+                ..
+            } if is_openai_responses_raw_block(extensions) => {
+                flush_openai_responses_message_item(
+                    &mut output,
+                    &mut message_content,
+                    &response_id,
+                    &mut message_index,
+                );
+                output.push(payload.clone());
             }
             CanonicalContentBlock::Unknown { .. } => {}
         }
@@ -329,6 +347,23 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, _compact: b
     response.extend(legacy_extension_fields);
     ensure_modern_openai_responses_response_fields(&mut response);
     Value::Object(response)
+}
+
+fn responses_tool_result_item_type(extensions: &BTreeMap<String, Value>) -> Option<&str> {
+    let item_type = extensions
+        .get(OPENAI_RESPONSES_EXTENSION_NAMESPACE)
+        .or_else(|| extensions.get(OPENAI_RESPONSES_LEGACY_EXTENSION_NAMESPACE))
+        .and_then(|value| value.get("item_type"))
+        .and_then(Value::as_str)?;
+    matches!(
+        item_type,
+        "custom_tool_call_output"
+            | "local_shell_call_output"
+            | "shell_call_output"
+            | "apply_patch_call_output"
+            | "computer_call_output"
+    )
+    .then_some(item_type)
 }
 
 pub(crate) fn ensure_modern_openai_responses_response_fields(

@@ -1122,6 +1122,14 @@ mod tests {
                 "output_index": 0,
             })),
             data_line(json!({
+                "type": "response.metadata",
+                "response_id": "resp_sidecar_123",
+                "sequence_number": 4,
+                "metadata": {
+                    "candidate_id": "provider-a",
+                },
+            })),
+            data_line(json!({
                 "type": "response.output_text.annotation.added",
                 "response_id": "resp_sidecar_123",
                 "output_index": 1,

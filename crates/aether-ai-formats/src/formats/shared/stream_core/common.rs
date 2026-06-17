@@ -331,7 +331,14 @@ pub fn canonical_usage_from_claude_usage(value: Option<&Value>) -> Option<Canoni
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let reasoning_tokens = usage
-        .get("reasoning_tokens")
+        .get("output_tokens_details")
+        .and_then(Value::as_object)
+        .and_then(|details| {
+            details
+                .get("thinking_tokens")
+                .or_else(|| details.get("reasoning_tokens"))
+        })
+        .or_else(|| usage.get("reasoning_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
     Some(CanonicalUsage {
