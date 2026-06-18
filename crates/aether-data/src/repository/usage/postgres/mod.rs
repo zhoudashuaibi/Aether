@@ -2102,39 +2102,41 @@ ORDER BY date ASC
             r#"
 SELECT
   COUNT(*)::BIGINT AS total_requests,
-  COALESCE(SUM(GREATEST(COALESCE("usage".input_tokens, 0), 0)), 0)::BIGINT AS input_tokens,
   COALESCE(SUM(
     CASE
-      WHEN GREATEST(COALESCE("usage".input_tokens, 0), 0) <= 0 THEN 0
-      WHEN GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0) <= 0
-      THEN GREATEST(COALESCE("usage".input_tokens, 0), 0)
-      WHEN split_part(lower(COALESCE(COALESCE("usage".endpoint_api_format, "usage".api_format), '')), ':', 1)
-           IN ('openai', 'gemini', 'google')
-      THEN GREATEST(
-        GREATEST(COALESCE("usage".input_tokens, 0), 0)
-          - GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0),
-        0
-      )
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.input_tokens, "usage".input_tokens, 0), 0)
       ELSE GREATEST(COALESCE("usage".input_tokens, 0), 0)
+    END
+  ), 0)::BIGINT AS input_tokens,
+  COALESCE(SUM(
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.input_tokens, "usage".input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".effective_input_tokens, "usage".input_tokens, 0), 0)
     END
   ), 0)::BIGINT AS effective_input_tokens,
-  COALESCE(SUM(GREATEST(COALESCE("usage".output_tokens, 0), 0)), 0)::BIGINT AS output_tokens,
   COALESCE(SUM(
     CASE
-      WHEN GREATEST(COALESCE("usage".input_tokens, 0), 0) <= 0 THEN 0
-      WHEN GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0) <= 0
-      THEN GREATEST(COALESCE("usage".input_tokens, 0), 0)
-      WHEN split_part(lower(COALESCE(COALESCE("usage".endpoint_api_format, "usage".api_format), '')), ':', 1)
-           IN ('openai', 'gemini', 'google')
-      THEN GREATEST(
-        GREATEST(COALESCE("usage".input_tokens, 0), 0)
-          - GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0),
-        0
-      )
-      ELSE GREATEST(COALESCE("usage".input_tokens, 0), 0)
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.output_tokens, "usage".output_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".output_tokens, 0), 0)
     END
-    + GREATEST(COALESCE("usage".output_tokens, 0), 0)
+  ), 0)::BIGINT AS output_tokens,
+  COALESCE(SUM(
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.input_tokens, "usage".input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".effective_input_tokens, "usage".input_tokens, 0), 0)
+    END
     + CASE
+        WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+        THEN GREATEST(COALESCE(usage_raw.output_tokens, "usage".output_tokens, 0), 0)
+        ELSE GREATEST(COALESCE("usage".output_tokens, 0), 0)
+      END
+    + CASE
+        WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+        THEN GREATEST(COALESCE(usage_raw.cache_creation_input_tokens, 0), 0)
         WHEN COALESCE("usage".cache_creation_input_tokens, 0) = 0
              AND (
                COALESCE("usage".cache_creation_input_tokens_5m, 0)
@@ -2144,10 +2146,16 @@ SELECT
            + COALESCE("usage".cache_creation_input_tokens_1h, 0)
         ELSE COALESCE("usage".cache_creation_input_tokens, 0)
       END
-    + GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
+    + CASE
+        WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+        THEN GREATEST(COALESCE(usage_raw.cache_read_input_tokens, "usage".cache_read_input_tokens, 0), 0)
+        ELSE GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
+      END
   ), 0)::BIGINT AS total_tokens,
   COALESCE(SUM(
     CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.cache_creation_input_tokens, 0), 0)
       WHEN COALESCE("usage".cache_creation_input_tokens, 0) = 0
            AND (
              COALESCE("usage".cache_creation_input_tokens_5m, 0)
@@ -2158,68 +2166,20 @@ SELECT
       ELSE COALESCE("usage".cache_creation_input_tokens, 0)
     END
   ), 0)::BIGINT AS cache_creation_tokens,
-  COALESCE(SUM(GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)), 0)::BIGINT
+  COALESCE(SUM(
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.cache_read_input_tokens, "usage".cache_read_input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
+    END
+  ), 0)::BIGINT
     AS cache_read_tokens,
   COALESCE(SUM(
     CASE
-      WHEN split_part(lower(COALESCE(COALESCE("usage".endpoint_api_format, "usage".api_format), '')), ':', 1)
-           IN ('claude', 'anthropic')
-      THEN GREATEST(COALESCE("usage".input_tokens, 0), 0)
-         + CASE
-             WHEN COALESCE("usage".cache_creation_input_tokens, 0) = 0
-                  AND (
-                    COALESCE("usage".cache_creation_input_tokens_5m, 0)
-                    + COALESCE("usage".cache_creation_input_tokens_1h, 0)
-                  ) > 0
-             THEN COALESCE("usage".cache_creation_input_tokens_5m, 0)
-                + COALESCE("usage".cache_creation_input_tokens_1h, 0)
-             ELSE COALESCE("usage".cache_creation_input_tokens, 0)
-           END
-         + GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
-      WHEN split_part(lower(COALESCE(COALESCE("usage".endpoint_api_format, "usage".api_format), '')), ':', 1)
-           IN ('openai', 'gemini', 'google')
-      THEN (
-        CASE
-          WHEN GREATEST(COALESCE("usage".input_tokens, 0), 0) <= 0 THEN 0
-          WHEN GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0) <= 0
-          THEN GREATEST(COALESCE("usage".input_tokens, 0), 0)
-          ELSE GREATEST(
-            GREATEST(COALESCE("usage".input_tokens, 0), 0)
-              - GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0),
-            0
-          )
-        END
-      ) + GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
-      ELSE CASE
-        WHEN (
-          CASE
-            WHEN COALESCE("usage".cache_creation_input_tokens, 0) = 0
-                 AND (
-                   COALESCE("usage".cache_creation_input_tokens_5m, 0)
-                   + COALESCE("usage".cache_creation_input_tokens_1h, 0)
-                 ) > 0
-            THEN COALESCE("usage".cache_creation_input_tokens_5m, 0)
-               + COALESCE("usage".cache_creation_input_tokens_1h, 0)
-            ELSE COALESCE("usage".cache_creation_input_tokens, 0)
-          END
-        ) > 0
-        THEN GREATEST(COALESCE("usage".input_tokens, 0), 0)
-           + (
-             CASE
-               WHEN COALESCE("usage".cache_creation_input_tokens, 0) = 0
-                    AND (
-                      COALESCE("usage".cache_creation_input_tokens_5m, 0)
-                      + COALESCE("usage".cache_creation_input_tokens_1h, 0)
-                    ) > 0
-               THEN COALESCE("usage".cache_creation_input_tokens_5m, 0)
-                  + COALESCE("usage".cache_creation_input_tokens_1h, 0)
-               ELSE COALESCE("usage".cache_creation_input_tokens, 0)
-             END
-           )
-           + GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
-        ELSE GREATEST(COALESCE("usage".input_tokens, 0), 0)
-           + GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
-      END
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.input_tokens, "usage".input_tokens, 0), 0)
+         + GREATEST(COALESCE(usage_raw.cache_read_input_tokens, "usage".cache_read_input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".total_input_context, "usage".input_tokens, 0), 0)
     END
   ), 0)::BIGINT AS total_input_context,
   COALESCE(SUM(COALESCE(CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION), 0)), 0)
@@ -2252,6 +2212,8 @@ SELECT
     END
   ), 0)::BIGINT AS response_time_samples
 FROM usage_billing_facts AS "usage"
+LEFT JOIN public."usage" AS usage_raw
+  ON usage_raw.request_id = "usage".request_id
 "#,
         );
         let mut has_where = false;
@@ -4811,10 +4773,27 @@ ORDER BY request_count DESC, group_key ASC
 WITH filtered_usage AS (
   SELECT
     {group_key_expr} AS group_key,
-    GREATEST(COALESCE("usage".input_tokens, 0), 0) AS input_tokens,
-    GREATEST(COALESCE("usage".output_tokens, 0), 0) AS output_tokens,
-    GREATEST(COALESCE("usage".total_tokens, 0), 0) AS total_tokens,
     CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.input_tokens, "usage".input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".input_tokens, 0), 0)
+    END AS input_tokens,
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.output_tokens, "usage".output_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".output_tokens, 0), 0)
+    END AS output_tokens,
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.input_tokens, 0), 0)
+         + GREATEST(COALESCE(usage_raw.output_tokens, 0), 0)
+         + GREATEST(COALESCE(usage_raw.cache_creation_input_tokens, 0), 0)
+         + GREATEST(COALESCE(usage_raw.cache_read_input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".total_tokens, 0), 0)
+    END AS total_tokens,
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.cache_creation_input_tokens, 0), 0)
       WHEN COALESCE("usage".cache_creation_input_tokens, 0) = 0
            AND (
              COALESCE("usage".cache_creation_input_tokens_5m, 0)
@@ -4828,7 +4807,11 @@ WITH filtered_usage AS (
       AS cache_creation_ephemeral_5m_tokens,
     GREATEST(COALESCE("usage".cache_creation_input_tokens_1h, 0), 0)
       AS cache_creation_ephemeral_1h_tokens,
-    GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0) AS cache_read_tokens,
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.cache_read_input_tokens, "usage".cache_read_input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
+    END AS cache_read_tokens,
     COALESCE(CAST("usage".total_cost_usd AS DOUBLE PRECISION), 0) AS total_cost_usd,
     COALESCE(CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION), 0) AS actual_total_cost_usd,
     CASE
@@ -4865,7 +4848,11 @@ WITH filtered_usage AS (
       ELSE 0
     END AS successful_response_time_samples,
     COALESCE(COALESCE("usage".endpoint_api_format, "usage".api_format), '') AS normalized_api_format
+    , (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      AS simulated_cache_enabled
   FROM usage_billing_facts AS "usage"
+  LEFT JOIN public."usage" AS usage_raw
+    ON usage_raw.request_id = "usage".request_id
 "#,
         ));
         let mut has_where = false;
@@ -4918,8 +4905,10 @@ normalized_usage AS (
     response_time_samples,
     successful_response_time_ms,
     successful_response_time_samples,
+    simulated_cache_enabled,
     CASE
       WHEN input_tokens <= 0 THEN 0
+      WHEN simulated_cache_enabled THEN input_tokens
       WHEN cache_read_tokens <= 0 THEN input_tokens
       WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
            IN ('openai', 'gemini', 'google')
@@ -4927,6 +4916,7 @@ normalized_usage AS (
       ELSE input_tokens
     END AS effective_input_tokens,
     CASE
+      WHEN simulated_cache_enabled THEN input_tokens + cache_read_tokens
       WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
            IN ('claude', 'anthropic')
       THEN input_tokens + cache_creation_tokens + cache_read_tokens
@@ -7074,10 +7064,27 @@ WITH filtered_usage AS (
     {provider_display_name_expr} AS provider_display_name,
     {provider_identity_source_expr} AS provider_identity_source,
     COALESCE("usage".api_format, 'unknown') AS api_format_group_key,
-    GREATEST(COALESCE("usage".input_tokens, 0), 0) AS input_tokens,
-    GREATEST(COALESCE("usage".output_tokens, 0), 0) AS output_tokens,
-    GREATEST(COALESCE("usage".total_tokens, 0), 0) AS total_tokens,
     CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.input_tokens, "usage".input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".input_tokens, 0), 0)
+    END AS input_tokens,
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.output_tokens, "usage".output_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".output_tokens, 0), 0)
+    END AS output_tokens,
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.input_tokens, 0), 0)
+         + GREATEST(COALESCE(usage_raw.output_tokens, 0), 0)
+         + GREATEST(COALESCE(usage_raw.cache_creation_input_tokens, 0), 0)
+         + GREATEST(COALESCE(usage_raw.cache_read_input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".total_tokens, 0), 0)
+    END AS total_tokens,
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.cache_creation_input_tokens, 0), 0)
       WHEN COALESCE("usage".cache_creation_input_tokens, 0) = 0
            AND (
              COALESCE("usage".cache_creation_input_tokens_5m, 0)
@@ -7091,8 +7098,14 @@ WITH filtered_usage AS (
       AS cache_creation_ephemeral_5m_tokens,
     GREATEST(COALESCE("usage".cache_creation_input_tokens_1h, 0), 0)
       AS cache_creation_ephemeral_1h_tokens,
-    GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0) AS cache_read_tokens,
+    CASE
+      WHEN (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      THEN GREATEST(COALESCE(usage_raw.cache_read_input_tokens, "usage".cache_read_input_tokens, 0), 0)
+      ELSE GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
+    END AS cache_read_tokens,
     COALESCE("usage".endpoint_api_format, "usage".api_format) AS normalized_api_format,
+    (usage_raw.request_metadata->'dimensions'->>'simulated_cache_enabled') = 'true'
+      AS simulated_cache_enabled,
     COALESCE(CAST("usage".total_cost_usd AS DOUBLE PRECISION), 0) AS total_cost_usd,
     COALESCE(CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION), 0) AS actual_total_cost_usd,
     GREATEST(COALESCE("usage".response_time_ms, 0), 0) AS response_time_ms,
@@ -7103,6 +7116,8 @@ WITH filtered_usage AS (
       ELSE 0
     END AS success_flag
   FROM usage_billing_facts AS "usage"
+  LEFT JOIN public."usage" AS usage_raw
+    ON usage_raw.request_id = "usage".request_id
 {provider_identity_join}
   WHERE "usage".created_at >= TO_TIMESTAMP($1::double precision)
     AND "usage".created_at < TO_TIMESTAMP($2::double precision)
@@ -7125,8 +7140,10 @@ normalized_usage AS (
     actual_total_cost_usd,
     response_time_ms,
     success_flag,
+    simulated_cache_enabled,
     CASE
       WHEN input_tokens <= 0 THEN 0
+      WHEN simulated_cache_enabled THEN input_tokens
       WHEN cache_read_tokens <= 0 THEN input_tokens
       WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
            IN ('openai', 'gemini', 'google')
@@ -7134,6 +7151,7 @@ normalized_usage AS (
       ELSE input_tokens
     END AS effective_input_tokens,
     CASE
+      WHEN simulated_cache_enabled THEN input_tokens + cache_read_tokens
       WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
            IN ('claude', 'anthropic')
       THEN input_tokens + cache_creation_tokens + cache_read_tokens
@@ -10659,6 +10677,15 @@ fn metadata_or_snapshot_dimensions(
         })
 }
 
+fn metadata_simulated_cache_enabled(metadata: Option<&serde_json::Map<String, Value>>) -> bool {
+    metadata
+        .and_then(|object| object.get("dimensions"))
+        .and_then(Value::as_object)
+        .and_then(|dimensions| dimensions.get("simulated_cache_enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn json_i64_value(value: &Value) -> Option<i64> {
     value
         .as_i64()
@@ -10866,8 +10893,12 @@ fn usage_effective_input_tokens(
     input_tokens: Option<i64>,
     cache_read_tokens: Option<i64>,
     api_family: &str,
+    simulated_cache_enabled: bool,
 ) -> Option<i64> {
     let input_tokens = input_tokens?;
+    if simulated_cache_enabled {
+        return Some(input_tokens);
+    }
     let cache_read_tokens = cache_read_tokens.unwrap_or_default();
     if matches!(api_family, "openai" | "gemini" | "google")
         && input_tokens > 0
@@ -10884,6 +10915,7 @@ fn usage_total_input_context(
     cache_creation_tokens: Option<i64>,
     cache_read_tokens: Option<i64>,
     api_family: &str,
+    simulated_cache_enabled: bool,
 ) -> Option<i64> {
     if input_tokens.is_none()
         && effective_input_tokens.is_none()
@@ -10897,6 +10929,9 @@ fn usage_total_input_context(
     let effective_input_tokens = effective_input_tokens.unwrap_or(input_tokens);
     let cache_creation_tokens = cache_creation_tokens.unwrap_or_default();
     let cache_read_tokens = cache_read_tokens.unwrap_or_default();
+    if simulated_cache_enabled {
+        return Some(input_tokens.saturating_add(cache_read_tokens));
+    }
     match api_family {
         "claude" | "anthropic" => Some(
             input_tokens
@@ -10963,6 +10998,7 @@ fn usage_settlement_pricing_snapshot_from_usage(
     let billing_cache_read_tokens =
         billing_dimension_i64(object, "cache_read_tokens").or(usage_cache_read_tokens);
     let api_family = usage_normalized_api_family(usage);
+    let simulated_cache_enabled = metadata_simulated_cache_enabled(object);
     let billing_effective_input_tokens = billing_dimension_i64(object, "effective_input_tokens")
         .or_else(|| {
             has_billing_dimensions
@@ -10974,6 +11010,7 @@ fn usage_settlement_pricing_snapshot_from_usage(
                 billing_input_tokens,
                 billing_cache_read_tokens,
                 api_family.as_str(),
+                simulated_cache_enabled,
             )
         });
     let billing_total_input_context =
@@ -10984,6 +11021,7 @@ fn usage_settlement_pricing_snapshot_from_usage(
                 billing_cache_creation_tokens,
                 billing_cache_read_tokens,
                 api_family.as_str(),
+                simulated_cache_enabled,
             )
         });
     let snapshot = UsageSettlementPricingSnapshot {
