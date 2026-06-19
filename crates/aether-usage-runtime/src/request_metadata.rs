@@ -47,6 +47,12 @@ fn copy_simulated_cache_dimensions(source: &Map<String, Value>, target: &mut Map
     {
         dimensions.insert("simulated_cache_max_percent".to_string(), value.clone());
     }
+    if let Some(value) = source
+        .get("simulated_cache_hit_percent")
+        .filter(|value| value.is_number())
+    {
+        dimensions.insert("simulated_cache_hit_percent".to_string(), value.clone());
+    }
     target.insert("dimensions".to_string(), Value::Object(dimensions));
 }
 

@@ -990,7 +990,11 @@ fn apply_simulated_cache_to_usage(
         return usage.has_token_signal().then_some(usage);
     }
 
-    let hit_percent = random_simulated_cache_percent(config.min_percent, config.max_percent);
+    let hit_percent =
+        simulated_cache_hit_percent_from_metadata(context_seed.request_metadata.as_ref())
+            .unwrap_or_else(|| {
+                random_simulated_cache_percent(config.min_percent, config.max_percent)
+            });
     let cache_read_tokens = ((total_input_tokens as f64) * hit_percent / 100.0).round() as u64;
     let cache_read_tokens = cache_read_tokens.min(total_input_tokens);
     let billed_input_tokens = total_input_tokens.saturating_sub(cache_read_tokens);
@@ -1042,6 +1046,17 @@ fn simulated_cache_config_from_metadata(
         min_percent,
         max_percent,
     })
+}
+
+fn simulated_cache_hit_percent_from_metadata(metadata: Option<&Value>) -> Option<f64> {
+    let object = metadata.and_then(Value::as_object)?;
+    let dimensions = object
+        .get("dimensions")
+        .and_then(Value::as_object)
+        .unwrap_or(object);
+    json_f64(dimensions.get("simulated_cache_hit_percent"))
+        .filter(|value| value.is_finite())
+        .map(|value| value.clamp(0.0, 100.0))
 }
 
 fn json_f64(value: Option<&Value>) -> Option<f64> {
