@@ -52,6 +52,7 @@ use crate::execution_runtime::kiro_cache::{
 use crate::execution_runtime::oauth_retry::refresh_oauth_plan_auth_for_retry;
 #[cfg(test)]
 use crate::execution_runtime::remote_compat::post_sync_plan_to_remote_execution_runtime;
+use crate::execution_runtime::simulated_cache::maybe_apply_simulated_cache_to_response_body;
 use crate::execution_runtime::submission::{
     resolve_local_sync_error_status_code, submit_local_core_error_or_sync_finalize,
 };
@@ -2153,7 +2154,32 @@ async fn execute_execution_runtime_sync_impl(
         }
         seed_kiro_sync_report_context_prompt_cache_usage(state, &plan, &mut report_context).await;
     }
+    let mut body_bytes = body_bytes;
+    let mut body_base64 = body_base64;
+    let mut body_json = body_json;
+    let mut response_body_rewritten = false;
+    if (200..300).contains(&status_code) {
+        if let Some(body_json) = body_json.as_mut() {
+            if maybe_apply_simulated_cache_to_response_body(
+                body_json,
+                &mut report_context,
+                plan.client_api_format.as_str(),
+            ) {
+                body_bytes = serde_json::to_vec(body_json)
+                    .map_err(|err| GatewayError::Internal(err.to_string()))?;
+                body_base64 = None;
+                response_body_rewritten = true;
+            }
+        }
+    }
     let mut client_headers = headers.clone();
+    if response_body_rewritten {
+        client_headers.remove("content-encoding");
+        client_headers.insert("content-length".to_string(), body_bytes.len().to_string());
+        client_headers
+            .entry("content-type".to_string())
+            .or_insert_with(|| "application/json".to_string());
+    }
     apply_endpoint_response_header_rules(state, &plan, &mut client_headers, body_json.as_ref())
         .await?;
     let explicit_finalize = should_finalize_sync_response(report_kind.as_deref());
