@@ -81,6 +81,8 @@ jobs:
 
       - name: Install & build
         working-directory: frontend
+        env:
+          AETHER_BUILD_VERSION: ${{ needs.preflight.outputs.version_tag }}
         run: |
           npm ci
           npm run build
