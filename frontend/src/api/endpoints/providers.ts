@@ -51,7 +51,9 @@ function normalizeProviderSummary(
     ...provider,
     chat_pii_redaction: normalizeChatPiiRedactionProvider(provider.chat_pii_redaction),
     pool_advanced: normalizePoolAdvanced(provider.pool_advanced),
-    kiro_simulated_cache_enabled: provider.kiro_simulated_cache_enabled ?? false,
+    simulated_cache_enabled: provider.simulated_cache_enabled ?? false,
+    simulated_cache_min_hit_percentage: provider.simulated_cache_min_hit_percentage,
+    simulated_cache_max_hit_percentage: provider.simulated_cache_max_hit_percentage,
     max_transfer_count: provider.max_transfer_count ?? 0,
     max_transfer_timeout_seconds: provider.max_transfer_timeout_seconds ?? 0,
   }

@@ -15,9 +15,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::execution_runtime::kiro_cache::{
-    billed_input_tokens, build_kiro_prompt_cache_profile, compute_kiro_prompt_cache_usage,
-    estimate_kiro_prompt_input_tokens, kiro_simulated_cache_enabled_from_provider_config,
-    KiroPromptCacheProfile, KiroPromptCacheUsage,
+    billed_input_tokens, estimate_kiro_prompt_input_tokens, KiroPromptCacheUsage,
 };
 use crate::execution_runtime::ndjson::encode_stream_frame_ndjson;
 use crate::execution_runtime::transport::{
@@ -39,7 +37,6 @@ struct KiroWebSearchRequest {
     query: String,
     model: String,
     input_tokens: u64,
-    cache_profile: Option<KiroPromptCacheProfile>,
 }
 
 #[derive(Debug, Serialize)]
@@ -159,21 +156,9 @@ pub(crate) async fn maybe_execute_kiro_web_search_stream(
     }
 
     let search_results = parse_mcp_search_results(&mcp_execution.result);
-    let cache_usage = if kiro_simulated_cache_enabled(state, plan).await {
-        match request.cache_profile.as_ref() {
-            Some(profile) => {
-                compute_kiro_prompt_cache_usage(
-                    state.runtime_state(),
-                    kiro_cache_credential_id(plan),
-                    profile,
-                )
-                .await
-            }
-            None => KiroPromptCacheUsage::default(),
-        }
-    } else {
-        KiroPromptCacheUsage::default()
-    };
+    // Generic simulated-cache accounting is applied later by the stream runtime. Keeping the
+    // synthetic Kiro response free of legacy cache usage avoids applying simulation twice.
+    let cache_usage = KiroPromptCacheUsage::default();
     let sse_body = build_web_search_sse_body(
         request.model.as_str(),
         request.query.as_str(),
@@ -192,40 +177,6 @@ pub(crate) async fn maybe_execute_kiro_web_search_stream(
         frame_stream: sse_frame_stream(Bytes::from(sse_body)),
         report_context: synthetic_context,
     }))
-}
-
-async fn kiro_simulated_cache_enabled(state: &AppState, plan: &ExecutionPlan) -> bool {
-    if !plan
-        .provider_name
-        .as_deref()
-        .is_some_and(|provider_name| provider_name.eq_ignore_ascii_case("Kiro"))
-    {
-        return false;
-    }
-
-    match state
-        .read_provider_catalog_providers_by_ids(std::slice::from_ref(&plan.provider_id))
-        .await
-    {
-        Ok(providers) => providers
-            .iter()
-            .find(|provider| provider.id == plan.provider_id)
-            .filter(|provider| provider.provider_type.eq_ignore_ascii_case("kiro"))
-            .is_some_and(|provider| {
-                kiro_simulated_cache_enabled_from_provider_config(provider.config.as_ref())
-            }),
-        Err(err) => {
-            warn!(
-                event_name = "kiro_simulated_cache_config_read_failed",
-                log_type = "event",
-                request_id = %plan.request_id,
-                provider_id = %plan.provider_id,
-                error = ?err,
-                "failed to read Kiro simulated cache provider config; defaulting disabled"
-            );
-            false
-        }
-    }
 }
 
 fn execute_result_body_bytes(result: &ExecutionResult) -> Vec<u8> {
@@ -801,7 +752,6 @@ fn detect_kiro_web_search_request(
                 query,
                 model,
                 input_tokens,
-                cache_profile: build_kiro_prompt_cache_profile(original, input_tokens),
             });
         }
     }
@@ -849,7 +799,6 @@ fn detect_kiro_web_search_from_envelope(plan: &ExecutionPlan) -> Option<KiroWebS
         query,
         model,
         input_tokens: estimate_input_tokens(body),
-        cache_profile: None,
     })
 }
 

@@ -1775,6 +1775,7 @@ pub fn admin_system_config_default_value(key: &str) -> Option<serde_json::Value>
         "module.chat_pii_redaction.rules" => Some(chat_pii_redaction_default_rules()),
         "module.chat_pii_redaction.cache_ttl_seconds" => Some(json!(300)),
         "module.chat_pii_redaction.placeholder_prefix" => Some(json!("AETHER")),
+        "module.simulated_cache.enabled" => Some(json!(false)),
         _ => None,
     }
 }
@@ -2229,7 +2230,8 @@ pub fn parse_admin_system_config_update(
         | "module.important_notification.enabled"
         | "module.important_notification.email_enabled"
         | "module.server_chan_push.enabled"
-        | "module.bark_push.enabled" => match value.as_bool() {
+        | "module.bark_push.enabled"
+        | "module.simulated_cache.enabled" => match value.as_bool() {
             Some(enabled) => value = json!(enabled),
             None if value.is_null() => {
                 value = admin_system_config_default_value(&normalized_key).unwrap_or(json!(false));
@@ -3479,14 +3481,13 @@ mod tests {
     }
 
     #[test]
-    fn cyber_continue_failover_update_requires_a_boolean() {
+    fn enable_model_directives_update_requires_a_boolean() {
         let update =
-            parse_admin_system_config_update("cyber_continue_failover", br#"{"value":true}"#)
-                .expect("boolean Cyber failover setting should parse");
+            parse_admin_system_config_update("enable_model_directives", br#"{"value":true}"#)
+                .expect("boolean model directives flag should parse");
         assert_eq!(update.value, json!(true));
-
         assert!(parse_admin_system_config_update(
-            "cyber_continue_failover",
+            "enable_model_directives",
             br#"{"value":"true"}"#,
         )
         .is_err());
@@ -3582,13 +3583,16 @@ mod tests {
     }
 
     #[test]
-    fn enable_model_directives_update_requires_a_boolean() {
-        let update =
-            parse_admin_system_config_update("enable_model_directives", br#"{"value":true}"#)
-                .expect("boolean model directives flag should parse");
+    fn simulated_cache_module_enabled_update_requires_a_boolean() {
+        let update = parse_admin_system_config_update(
+            "module.simulated_cache.enabled",
+            br#"{"value":true}"#,
+        )
+        .expect("boolean simulated cache flag should parse");
         assert_eq!(update.value, json!(true));
+
         assert!(parse_admin_system_config_update(
-            "enable_model_directives",
+            "module.simulated_cache.enabled",
             br#"{"value":"true"}"#,
         )
         .is_err());

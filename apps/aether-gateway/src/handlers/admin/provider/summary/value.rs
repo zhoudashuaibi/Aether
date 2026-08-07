@@ -143,12 +143,29 @@ pub(crate) fn build_admin_provider_summary_value(
         .and_then(|cfg| cfg.get("architecture_id"))
         .and_then(serde_json::Value::as_str)
         .map(ToOwned::to_owned);
-    let kiro_simulated_cache_enabled = config
+    let simulated_cache_config = config
+        .and_then(|cfg| cfg.get("simulated_cache"))
+        .and_then(serde_json::Value::as_object);
+    let legacy_kiro_simulated_cache_enabled = config
         .and_then(|cfg| cfg.get("kiro"))
         .and_then(serde_json::Value::as_object)
         .and_then(|cfg| cfg.get("simulated_cache_enabled"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+    let simulated_cache_enabled = simulated_cache_config
+        .and_then(|cfg| cfg.get("enabled"))
+        .and_then(serde_json::Value::as_bool)
+        // Migration fallback: surface the legacy Kiro flag as the canonical
+        // simulated-cache state so upgraded providers show as enabled and the
+        // edit form populates a sensible default range instead of resetting to
+        // disabled on the next save.
+        .unwrap_or(legacy_kiro_simulated_cache_enabled);
+    let simulated_cache_min_hit_percentage = simulated_cache_config
+        .and_then(|cfg| cfg.get("min_hit_percentage"))
+        .and_then(serde_json::Value::as_f64);
+    let simulated_cache_max_hit_percentage = simulated_cache_config
+        .and_then(|cfg| cfg.get("max_hit_percentage"))
+        .and_then(serde_json::Value::as_f64);
     let ops_quota_alert_enabled = provider_ops_config
         .and_then(serde_json::Value::as_object)
         .and_then(|cfg| cfg.get("quota_alert"))
@@ -216,7 +233,10 @@ pub(crate) fn build_admin_provider_summary_value(
         "endpoint_health_details": endpoint_health_details,
         "ops_configured": ops_configured,
         "ops_architecture_id": ops_architecture_id,
-        "kiro_simulated_cache_enabled": kiro_simulated_cache_enabled,
+        "simulated_cache_enabled": simulated_cache_enabled,
+        "simulated_cache_min_hit_percentage": simulated_cache_min_hit_percentage,
+        "simulated_cache_max_hit_percentage": simulated_cache_max_hit_percentage,
+        "kiro_simulated_cache_enabled": legacy_kiro_simulated_cache_enabled,
         "codex_cyber_flag_passthrough_enabled": codex_cyber_flag_passthrough_enabled(&provider.provider_type, provider.config.as_ref()),
         "ops_quota_alert_enabled": ops_quota_alert_enabled,
         "created_at": endpoint_timestamp_or_now(provider.created_at_unix_ms, now_unix_secs),

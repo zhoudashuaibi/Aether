@@ -20,6 +20,194 @@ const TOKENS_PER_TOOL: u64 = 150;
 const TOKENS_PER_MESSAGE: u64 = 4;
 const INLINE_IMAGE_DATA_TOKEN_PLACEHOLDER: &str = "[inline-image-data]";
 pub(crate) const KIRO_SIMULATED_CACHE_ENABLED_CONTEXT_FIELD: &str = "kiro_simulated_cache_enabled";
+pub(crate) const SIMULATED_CACHE_ENABLED_CONTEXT_FIELD: &str = "simulated_cache_enabled";
+pub(crate) const SIMULATED_CACHE_MIN_HIT_BPS_CONTEXT_FIELD: &str =
+    "simulated_cache_min_hit_basis_points";
+pub(crate) const SIMULATED_CACHE_MAX_HIT_BPS_CONTEXT_FIELD: &str =
+    "simulated_cache_max_hit_basis_points";
+pub(crate) const SIMULATED_CACHE_MODULE_ENABLED_KEY: &str = "module.simulated_cache.enabled";
+const MAX_PERCENTAGE_BASIS_POINTS: u32 = 10_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SimulatedCacheConfig {
+    min_hit_basis_points: u32,
+    max_hit_basis_points: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SimulatedCacheMode {
+    Disabled,
+    Percentage(SimulatedCacheConfig),
+    LegacyKiro,
+}
+
+impl SimulatedCacheConfig {
+    pub(crate) fn cache_read_tokens(self, input_tokens: u64) -> u64 {
+        if input_tokens == 0 {
+            return 0;
+        }
+        let basis_points =
+            random_basis_points(self.min_hit_basis_points, self.max_hit_basis_points);
+        input_tokens.saturating_mul(u64::from(basis_points))
+            / u64::from(MAX_PERCENTAGE_BASIS_POINTS)
+    }
+}
+
+fn random_basis_points(min: u32, max: u32) -> u32 {
+    if min >= max {
+        return min;
+    }
+    let random = uuid::Uuid::new_v4();
+    let bytes = random.as_bytes();
+    let value = u64::from_le_bytes(bytes[..8].try_into().unwrap_or_default());
+    min + (value % u64::from(max - min + 1)) as u32
+}
+
+fn percentage_basis_points(value: &Value) -> Option<u32> {
+    let percentage = value.as_f64()?;
+    if !percentage.is_finite() || !(0.0..=100.0).contains(&percentage) {
+        return None;
+    }
+    Some((percentage * 100.0).round() as u32)
+}
+
+pub(crate) fn simulated_cache_config_from_provider_config(
+    config: Option<&Value>,
+) -> Option<SimulatedCacheConfig> {
+    let config = config?.as_object()?;
+    let new_config = config.get("simulated_cache")?.as_object()?;
+    parse_new_simulated_cache_config(new_config)
+}
+
+pub(crate) fn simulated_cache_mode_from_provider_config(
+    provider_type: &str,
+    config: Option<&Value>,
+    module_enabled: bool,
+    allow_legacy_kiro: bool,
+) -> SimulatedCacheMode {
+    // An explicit percentage config supersedes the legacy Kiro flag, including when the
+    // percentage module is disabled.
+    let has_percentage_config = config
+        .and_then(Value::as_object)
+        .is_some_and(|config| config.contains_key("simulated_cache"));
+    if has_percentage_config {
+        return if module_enabled {
+            simulated_cache_config_from_provider_config(config)
+                .map(SimulatedCacheMode::Percentage)
+                .unwrap_or(SimulatedCacheMode::Disabled)
+        } else {
+            SimulatedCacheMode::Disabled
+        };
+    }
+    if allow_legacy_kiro
+        && provider_type.eq_ignore_ascii_case("kiro")
+        && kiro_simulated_cache_enabled_from_provider_config(config)
+    {
+        SimulatedCacheMode::LegacyKiro
+    } else {
+        SimulatedCacheMode::Disabled
+    }
+}
+
+fn parse_new_simulated_cache_config(
+    config: &serde_json::Map<String, Value>,
+) -> Option<SimulatedCacheConfig> {
+    if !config
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let min_hit_basis_points = percentage_basis_points(config.get("min_hit_percentage")?)?;
+    let max_hit_basis_points = percentage_basis_points(config.get("max_hit_percentage")?)?;
+    (min_hit_basis_points <= max_hit_basis_points).then_some(SimulatedCacheConfig {
+        min_hit_basis_points,
+        max_hit_basis_points,
+    })
+}
+
+pub(crate) fn seed_simulated_cache_config_in_report_context(
+    report_context: &mut Option<Value>,
+    config: Option<SimulatedCacheConfig>,
+) {
+    let Some(context) = report_context.as_mut().and_then(Value::as_object_mut) else {
+        return;
+    };
+    for key in [
+        SIMULATED_CACHE_ENABLED_CONTEXT_FIELD,
+        SIMULATED_CACHE_MIN_HIT_BPS_CONTEXT_FIELD,
+        SIMULATED_CACHE_MAX_HIT_BPS_CONTEXT_FIELD,
+    ] {
+        context.remove(key);
+    }
+    let Some(config) = config else {
+        return;
+    };
+    context.insert(
+        SIMULATED_CACHE_ENABLED_CONTEXT_FIELD.to_string(),
+        Value::Bool(true),
+    );
+    context.insert(
+        SIMULATED_CACHE_MIN_HIT_BPS_CONTEXT_FIELD.to_string(),
+        Value::from(config.min_hit_basis_points),
+    );
+    context.insert(
+        SIMULATED_CACHE_MAX_HIT_BPS_CONTEXT_FIELD.to_string(),
+        Value::from(config.max_hit_basis_points),
+    );
+}
+
+pub(crate) fn seed_simulated_cache_mode_in_report_context(
+    report_context: &mut Option<Value>,
+    mode: SimulatedCacheMode,
+) {
+    let percentage_config = match mode {
+        SimulatedCacheMode::Percentage(config) => Some(config),
+        SimulatedCacheMode::Disabled | SimulatedCacheMode::LegacyKiro => None,
+    };
+    seed_simulated_cache_config_in_report_context(report_context, percentage_config);
+    let Some(context) = report_context.as_mut().and_then(Value::as_object_mut) else {
+        return;
+    };
+    if mode == SimulatedCacheMode::LegacyKiro {
+        context.insert(
+            KIRO_SIMULATED_CACHE_ENABLED_CONTEXT_FIELD.to_string(),
+            Value::Bool(true),
+        );
+    } else {
+        context.remove(KIRO_SIMULATED_CACHE_ENABLED_CONTEXT_FIELD);
+    }
+}
+
+pub(crate) fn simulated_cache_config_from_report_context(
+    report_context: Option<&Value>,
+) -> Option<SimulatedCacheConfig> {
+    let context = report_context?.as_object()?;
+    if !context
+        .get(SIMULATED_CACHE_ENABLED_CONTEXT_FIELD)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let min_hit_basis_points = context
+        .get(SIMULATED_CACHE_MIN_HIT_BPS_CONTEXT_FIELD)?
+        .as_u64()?
+        .try_into()
+        .ok()?;
+    let max_hit_basis_points = context
+        .get(SIMULATED_CACHE_MAX_HIT_BPS_CONTEXT_FIELD)?
+        .as_u64()?
+        .try_into()
+        .ok()?;
+    (min_hit_basis_points <= max_hit_basis_points
+        && max_hit_basis_points <= MAX_PERCENTAGE_BASIS_POINTS)
+        .then_some(SimulatedCacheConfig {
+            min_hit_basis_points,
+            max_hit_basis_points,
+        })
+}
 
 static KIRO_PROMPT_CACHE_TRACKER: OnceLock<KiroPromptCacheTracker> = OnceLock::new();
 
@@ -102,6 +290,64 @@ pub(crate) async fn compute_kiro_prompt_cache_usage(
             kiro_prompt_cache_tracker().compute_and_update(credential_id, profile)
         }
     }
+}
+
+pub(crate) async fn seed_legacy_kiro_prompt_cache_usage(
+    runtime_state: &RuntimeState,
+    credential_id: String,
+    report_context: &mut Option<Value>,
+) {
+    if !kiro_simulated_cache_enabled_from_report_context(report_context.as_ref()) {
+        return;
+    }
+    let Some(context) = report_context.as_mut().and_then(Value::as_object_mut) else {
+        return;
+    };
+    if context
+        .get("kiro_web_search_mcp")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || context
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+        || context
+            .get("cache_read_input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+    {
+        return;
+    }
+    let Some(original_request_body) = context.get("original_request_body").cloned() else {
+        return;
+    };
+    let input_tokens = context
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            let estimated = estimate_kiro_prompt_input_tokens(&original_request_body);
+            context.insert("input_tokens".to_string(), Value::from(estimated));
+            estimated
+        });
+    let Some(profile) = build_kiro_prompt_cache_profile(&original_request_body, input_tokens)
+    else {
+        return;
+    };
+    let cache_usage = compute_kiro_prompt_cache_usage(runtime_state, credential_id, &profile).await;
+    if cache_usage.cache_creation_input_tokens == 0 && cache_usage.cache_read_input_tokens == 0 {
+        return;
+    }
+    context.insert(
+        "cache_creation_input_tokens".to_string(),
+        Value::from(cache_usage.cache_creation_input_tokens),
+    );
+    context.insert(
+        "cache_read_input_tokens".to_string(),
+        Value::from(cache_usage.cache_read_input_tokens),
+    );
 }
 
 async fn compute_kiro_prompt_cache_usage_with_runtime_state(
@@ -453,6 +699,42 @@ pub(crate) fn estimate_kiro_prompt_input_tokens(request_body: &Value) -> u64 {
         .unwrap_or(0);
 
     (system_tokens + message_tokens + tool_tokens).max(1)
+}
+
+pub(crate) fn estimate_simulated_cache_input_tokens(request_body: &Value) -> u64 {
+    let redacted = redact_inline_image_data_for_token_estimation(request_body);
+    let preferred_tokens = redacted
+        .as_object()
+        .map(|object| {
+            [
+                "instructions",
+                "input",
+                "messages",
+                "prompt",
+                "contents",
+                "system",
+                "systemInstruction",
+                "system_instruction",
+                "tools",
+            ]
+            .into_iter()
+            .filter_map(|field| object.get(field))
+            .map(estimate_json_value_tokens)
+            .fold(0u64, u64::saturating_add)
+        })
+        .unwrap_or(0);
+    if preferred_tokens > 0 {
+        preferred_tokens
+    } else {
+        estimate_json_value_tokens(&redacted)
+    }
+}
+
+fn estimate_json_value_tokens(value: &Value) -> u64 {
+    serde_json::to_string(value)
+        .map(|value| count_text_tokens(&value))
+        .unwrap_or(1)
+        .max(1)
 }
 
 fn count_messages_tokens(messages: &[Value]) -> u64 {
@@ -1491,6 +1773,73 @@ mod tests {
 
         assert!(estimated > last_breakpoint_tokens);
         assert!(billed_input_tokens(estimated, usage) > 0);
+    }
+
+    #[test]
+    fn simulated_cache_estimator_counts_provider_neutral_request_fields() {
+        let openai_request = serde_json::json!({
+            "model": "gpt-5",
+            "input": "long responses prompt ".repeat(400),
+            "usage": {"input_tokens": 1}
+        });
+        let mut openai_without_usage = openai_request.clone();
+        openai_without_usage
+            .as_object_mut()
+            .expect("request should be an object")
+            .remove("usage");
+        let openai_estimate = estimate_simulated_cache_input_tokens(&openai_request);
+        assert!(openai_estimate > 100);
+        assert_eq!(
+            openai_estimate,
+            estimate_simulated_cache_input_tokens(&openai_without_usage),
+            "response-only usage fields must not control request token estimates"
+        );
+
+        let gemini_request = serde_json::json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": "long Gemini prompt ".repeat(400)}]
+            }]
+        });
+        assert!(estimate_simulated_cache_input_tokens(&gemini_request) > 100);
+    }
+
+    #[test]
+    fn simulated_cache_mode_preserves_legacy_kiro_without_enabling_percentage_mode() {
+        let legacy_config = serde_json::json!({
+            "kiro": {"simulated_cache_enabled": true}
+        });
+        assert_eq!(
+            simulated_cache_mode_from_provider_config("kiro", Some(&legacy_config), false, true,),
+            SimulatedCacheMode::LegacyKiro
+        );
+        assert_eq!(
+            simulated_cache_mode_from_provider_config("kiro", Some(&legacy_config), false, false,),
+            SimulatedCacheMode::Disabled
+        );
+
+        let percentage_config = serde_json::json!({
+            "simulated_cache": {
+                "enabled": true,
+                "min_hit_percentage": 25,
+                "max_hit_percentage": 50
+            },
+            "kiro": {"simulated_cache_enabled": true}
+        });
+        assert_eq!(
+            simulated_cache_mode_from_provider_config(
+                "kiro",
+                Some(&percentage_config),
+                false,
+                true,
+            ),
+            SimulatedCacheMode::Disabled,
+            "an explicit percentage config must not fall back to the legacy mode"
+        );
+        assert!(matches!(
+            simulated_cache_mode_from_provider_config("kiro", Some(&percentage_config), true, true,),
+            SimulatedCacheMode::Percentage(_)
+        ));
     }
 
     #[test]

@@ -318,19 +318,31 @@
         </div>
 
         <div
-          v-if="form.provider_type === 'kiro'"
-          class="flex items-center justify-between p-3 border rounded-lg bg-muted/50"
+          v-if="simulatedCacheModuleActive"
+          class="space-y-3 p-3 border rounded-lg bg-muted/50"
         >
-          <div class="space-y-0.5">
-            <span class="text-sm font-medium">{{ legacyT('模拟缓存模式') }}</span>
-            <p class="text-xs text-muted-foreground leading-relaxed">
-              {{ legacyT('启用后仅对 Kiro 请求模拟 prompt cache 读写计量。') }}
-            </p>
+          <div class="flex items-center justify-between">
+            <div class="space-y-0.5">
+              <span class="text-sm font-medium">{{ legacyT('模拟缓存') }}</span>
+              <p class="text-xs text-muted-foreground leading-relaxed">
+                {{ legacyT('按请求输入 token 的随机百分比模拟缓存命中统计。') }}
+              </p>
+            </div>
+            <Switch
+              :model-value="form.simulated_cache_enabled"
+              @update:model-value="(v: boolean) => form.simulated_cache_enabled = v"
+            />
           </div>
-          <Switch
-            :model-value="form.kiro_simulated_cache_enabled"
-            @update:model-value="(v: boolean) => form.kiro_simulated_cache_enabled = v"
-          />
+          <div v-if="form.simulated_cache_enabled" class="grid grid-cols-2 gap-3">
+            <div class="space-y-2">
+              <Label>{{ legacyT('最小命中百分比') }}</Label>
+              <Input v-model.number="form.simulated_cache_min_hit_percentage" type="number" min="0" max="100" step="0.01" />
+            </div>
+            <div class="space-y-2">
+              <Label>{{ legacyT('最大命中百分比') }}</Label>
+              <Input v-model.number="form.simulated_cache_max_hit_percentage" type="number" min="0" max="100" step="0.01" />
+            </div>
+          </div>
         </div>
 
         <div class="flex items-center justify-between gap-4 p-3 border rounded-lg bg-muted/50">
@@ -381,6 +393,7 @@ import { Server, SquarePen } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
 import { useFormDialog } from '@/composables/useFormDialog'
 import { useI18n } from '@/i18n'
+import { useModuleStore } from '@/stores/modules'
 import {
   createProvider,
   normalizePoolAdvancedConfig,
@@ -406,6 +419,11 @@ const emit = defineEmits<{
 
 const { success, error: showError } = useToast()
 const { legacyT } = useI18n()
+const moduleStore = useModuleStore()
+if (!moduleStore.loaded && !moduleStore.loading) {
+  void moduleStore.fetchModules().catch(() => undefined)
+}
+const simulatedCacheModuleActive = computed(() => moduleStore.isActive('simulated_cache'))
 const loading = ref(false)
 
 // 内部状态
@@ -453,8 +471,10 @@ const form = ref({
   request_timeout: undefined as number | undefined,
   // 号池模式
   pool_mode_enabled: false,
-  // Kiro 专属配置
-  kiro_simulated_cache_enabled: false,
+  // 模拟缓存配置
+  simulated_cache_enabled: false,
+  simulated_cache_min_hit_percentage: undefined as number | undefined,
+  simulated_cache_max_hit_percentage: undefined as number | undefined,
 })
 
 // 重置表单
@@ -483,8 +503,10 @@ function resetForm() {
     request_timeout: undefined,
     // 号池模式
     pool_mode_enabled: false,
-    // Kiro 专属配置
-    kiro_simulated_cache_enabled: false,
+    // 模拟缓存配置
+    simulated_cache_enabled: false,
+    simulated_cache_min_hit_percentage: undefined,
+    simulated_cache_max_hit_percentage: undefined,
   }
 }
 
@@ -517,8 +539,10 @@ function loadProviderData() {
     request_timeout: props.provider.request_timeout ?? undefined,
     // 号池模式
     pool_mode_enabled: poolAdvanced !== null,
-    // Kiro 专属配置
-    kiro_simulated_cache_enabled: props.provider.kiro_simulated_cache_enabled ?? false,
+    // 模拟缓存配置（从 legacy kiro 状态迁移到新配置的 provider 仍会显示启用，并填入默认范围）
+    simulated_cache_enabled: props.provider.simulated_cache_enabled ?? false,
+    simulated_cache_min_hit_percentage: props.provider.simulated_cache_min_hit_percentage ?? 0,
+    simulated_cache_max_hit_percentage: props.provider.simulated_cache_max_hit_percentage ?? 100,
   }
 }
 
@@ -537,8 +561,8 @@ watch(() => form.value.provider_type, () => {
   if (!isEditMode.value) {
     form.value.pool_mode_enabled = false
   }
-  if (form.value.provider_type !== 'kiro') {
-    form.value.kiro_simulated_cache_enabled = false
+  if (!simulatedCacheModuleActive.value) {
+    form.value.simulated_cache_enabled = false
   }
 })
 
@@ -559,6 +583,28 @@ const handleSubmit = async () => {
   if (form.value.quota_expires_at && !quotaExpiresAt) {
     showError(legacyT('过期时间必须是合法时间'), legacyT('验证失败'))
     return
+  }
+
+  if (form.value.simulated_cache_enabled) {
+    const min = form.value.simulated_cache_min_hit_percentage
+    const max = form.value.simulated_cache_max_hit_percentage
+    if (
+      min == null ||
+      max == null ||
+      !Number.isFinite(min) ||
+      !Number.isFinite(max) ||
+      min < 0 ||
+      min > 100 ||
+      max < 0 ||
+      max > 100
+    ) {
+      showError(legacyT('缓存命中百分比必须是 0 到 100 之间的有限数值'), legacyT('验证失败'))
+      return
+    }
+    if (min > max) {
+      showError(legacyT('最小命中百分比不能大于最大命中百分比'), legacyT('验证失败'))
+      return
+    }
   }
 
   loading.value = true
@@ -586,12 +632,18 @@ const handleSubmit = async () => {
       pool_advanced: form.value.pool_mode_enabled
         ? (currentPoolAdvanced ?? {})
         : null,
-      ...(form.value.provider_type === 'kiro'
+      ...(moduleStore.loaded && simulatedCacheModuleActive.value
         ? {
             config: {
-              kiro: {
-                simulated_cache_enabled: form.value.kiro_simulated_cache_enabled,
-              },
+              simulated_cache: form.value.simulated_cache_enabled
+                ? {
+                    enabled: true,
+                    min_hit_percentage: form.value.simulated_cache_min_hit_percentage,
+                    max_hit_percentage: form.value.simulated_cache_max_hit_percentage,
+                  }
+                : {
+                    enabled: false,
+                  },
             },
           }
         : {}),

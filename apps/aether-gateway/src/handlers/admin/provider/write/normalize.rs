@@ -1,5 +1,40 @@
 use std::collections::BTreeSet;
 
+pub(crate) fn normalize_simulated_cache_config(
+    value: Option<serde_json::Value>,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let config = value
+        .as_object()
+        .ok_or_else(|| "simulated_cache 必须是 JSON 对象".to_string())?;
+    let enabled = config
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| "simulated_cache.enabled 必须是布尔值".to_string())?;
+    if !enabled {
+        return Ok(Some(serde_json::json!({ "enabled": false })));
+    }
+    let parse_percentage = |key: &str| {
+        config
+            .get(key)
+            .and_then(serde_json::Value::as_f64)
+            .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
+            .ok_or_else(|| format!("simulated_cache.{key} 必须是 0 到 100 之间的有限数值"))
+    };
+    let min = parse_percentage("min_hit_percentage")?;
+    let max = parse_percentage("max_hit_percentage")?;
+    if min > max {
+        return Err("simulated_cache.min_hit_percentage 不能大于 max_hit_percentage".to_string());
+    }
+    Ok(Some(serde_json::json!({
+        "enabled": true,
+        "min_hit_percentage": min,
+        "max_hit_percentage": max,
+    })))
+}
+
 pub(crate) fn normalize_provider_type_input(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_ascii_lowercase();
     match normalized.as_str() {

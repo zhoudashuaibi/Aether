@@ -4,9 +4,11 @@ use crate::handlers::admin::provider::shared::support::{
     normalize_provider_transfer_limit_json, parse_optional_rfc3339_unix_secs,
     PROVIDER_MAX_TRANSFER_COUNT_CONFIG_KEY, PROVIDER_MAX_TRANSFER_TIMEOUT_SECONDS_CONFIG_KEY,
 };
-use crate::handlers::admin::provider::write::normalize::normalize_chat_pii_redaction_config;
 use crate::handlers::admin::provider::write::normalize::normalize_pool_advanced_config;
 use crate::handlers::admin::provider::write::normalize::normalize_provider_type_input;
+use crate::handlers::admin::provider::write::normalize::{
+    normalize_chat_pii_redaction_config, normalize_simulated_cache_config,
+};
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::admin::shared::normalize_json_object;
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogProvider;
@@ -150,6 +152,12 @@ pub(crate) async fn build_admin_create_provider_record(
             return Err("claude_code_advanced 仅适用于 provider_type=claude_code".to_string());
         }
         config_map.insert("claude_code_advanced".to_string(), value);
+    }
+    if config_map.contains_key("simulated_cache") {
+        let value = normalize_simulated_cache_config(config_map.remove("simulated_cache"))?;
+        if let Some(value) = value {
+            config_map.insert("simulated_cache".to_string(), value);
+        }
     }
     if config_map.contains_key("chat_pii_redaction") {
         let value = normalize_chat_pii_redaction_config(config_map.remove("chat_pii_redaction"))?;

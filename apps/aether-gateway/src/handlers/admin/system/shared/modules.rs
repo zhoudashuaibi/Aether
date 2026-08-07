@@ -135,6 +135,18 @@ pub(crate) const ADMIN_MODULE_DEFINITIONS: &[AdminModuleDefinition] = &[
         admin_menu_order: 60,
     },
     AdminModuleDefinition {
+        name: "simulated_cache",
+        display_name: "模拟缓存",
+        description: "按请求输入 token 的随机百分比模拟缓存命中统计",
+        category: "integration",
+        env_key: "SIMULATED_CACHE_AVAILABLE",
+        default_available: true,
+        admin_route: None,
+        admin_menu_icon: None,
+        admin_menu_group: None,
+        admin_menu_order: 60,
+    },
+    AdminModuleDefinition {
         name: "gemini_files",
         display_name: "文件缓存",
         description: "管理 Gemini Files API 上传的文件，支持文件上传、查看和删除",

@@ -39,7 +39,7 @@ Aether 是一个自托管的 AI API 网关，为团队和个人提供多租户�
 
 ```bash
 # 1. 克隆代码
-git clone https://github.com/fawney19/Aether.git
+git clone https://github.com/zhoudashuaibi/Aether.git
 cd Aether
 
 # 2. 配置环境变量
@@ -110,7 +110,7 @@ docker compose -f docker-compose.release-local.yml down -v
 ```bash
 git clone https://github.com/fawney19/Aether.git
 cd Aether
-curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/zhoudashuaibi/Aether/main/install.sh | sudo bash
 ```
 
 ## 本地开发
