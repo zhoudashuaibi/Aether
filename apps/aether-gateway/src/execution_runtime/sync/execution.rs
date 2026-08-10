@@ -34,6 +34,7 @@ use crate::ai_serving::api::{
     implicit_sync_finalize_report_kind, maybe_build_sync_finalize_outcome, LocalCoreSyncErrorKind,
     LocalCoreSyncFinalizeOutcome,
 };
+use crate::ai_serving::apply_simulated_cache_usage_to_openai_responses_body;
 use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
     build_client_response_from_parts_with_mutator,
@@ -3048,7 +3049,26 @@ async fn execute_execution_runtime_sync_impl(
         )?));
     }
 
-    let usage_payload = build_sync_report_payload(
+    let mut client_body_json = body_json.clone();
+    let mut client_body_bytes = body_bytes;
+    let simulated_cache_rewritten = client_body_json.as_mut().is_some_and(|body| {
+        apply_simulated_cache_usage_to_openai_responses_body(
+            body,
+            plan.client_api_format.as_str(),
+            report_context.as_ref(),
+        )
+    });
+    if simulated_cache_rewritten {
+        client_body_bytes = serde_json::to_vec(
+            client_body_json
+                .as_ref()
+                .expect("simulated cache rewrite requires a JSON response"),
+        )
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        client_headers.remove("content-encoding");
+        client_headers.insert("content-length".to_string(), client_body_bytes.len().to_string());
+    }
+    let mut usage_payload = build_sync_report_payload(
         trace_id,
         report_kind.unwrap_or_default(),
         report_context,
@@ -3058,6 +3078,7 @@ async fn execute_execution_runtime_sync_impl(
         body_base64,
         telemetry,
     );
+    usage_payload.client_body_json = client_body_json;
     if status_code < 400 {
         apply_sync_success_effects(
             state,
@@ -3081,7 +3102,7 @@ async fn execute_execution_runtime_sync_impl(
         build_client_response_from_parts(
             status_code,
             &usage_payload.headers,
-            Body::from(body_bytes),
+            Body::from(client_body_bytes),
             trace_id,
             Some(decision),
         )?,

@@ -776,7 +776,7 @@ fn seed_stream_report_context_simulated_cache_usage(report_context: &mut Option<
 
 async fn maybe_apply_simulated_cache_usage_to_stream_summary(
     _state: &AppState,
-    _plan: &ExecutionPlan,
+    plan: &ExecutionPlan,
     report_context: Option<&Value>,
     summary: &mut Option<ExecutionStreamTerminalSummary>,
 ) {
@@ -818,10 +818,9 @@ async fn maybe_apply_simulated_cache_usage_to_stream_summary(
     let usage = summary
         .standardized_usage
         .get_or_insert_with(StandardizedUsage::new);
-    // Simulated cache is billed against the gross prompt size (estimated from the original
-    // request body and seeded into the report context), not the provider's potentially
-    // already-net `input_tokens`, so taking the max avoids subtracting the simulated cache
-    // hit from a figure that already had real cache deducted by the provider.
+    // Simulated cache is applied against the gross prompt size (estimated from the original
+    // request body and seeded into the report context). OpenAI/Gemini report gross input with
+    // cache reads as a subset; Claude reports fresh input separately from cache reads.
     let actual_input_tokens = usage.input_tokens.max(0) as u64;
     let total_input_tokens = actual_input_tokens.max(
         report_context
@@ -841,11 +840,29 @@ async fn maybe_apply_simulated_cache_usage_to_stream_summary(
         .and_then(Value::as_u64)
         .unwrap_or_else(|| config.cache_read_tokens(total_input_tokens))
         .min(total_input_tokens);
-    usage.input_tokens = total_input_tokens.saturating_sub(cache_read_tokens) as i64;
+    usage.input_tokens =
+        if simulated_cache_reports_gross_input_tokens(plan.provider_api_format.as_str()) {
+            total_input_tokens
+        } else {
+            total_input_tokens.saturating_sub(cache_read_tokens)
+        } as i64;
     usage.cache_creation_tokens = 0;
     usage.cache_creation_ephemeral_5m_tokens = 0;
     usage.cache_creation_ephemeral_1h_tokens = 0;
     usage.cache_read_tokens = cache_read_tokens as i64;
+}
+
+fn simulated_cache_reports_gross_input_tokens(api_format: &str) -> bool {
+    matches!(
+        api_format
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "openai" | "gemini" | "google"
+    )
 }
 
 fn append_stream_capture_bytes(
@@ -10537,6 +10554,46 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 845);
         assert_eq!(usage.cache_creation_tokens, 0);
         assert_eq!(usage.output_tokens, 19);
+    }
+
+    #[tokio::test]
+    async fn stream_summary_keeps_gross_openai_input_with_simulated_cache_read() {
+        let state = test_state();
+        let plan = direct_stream_test_plan(
+            "simulated-cache-openai-summary",
+            "https://example.com/v1/responses".to_string(),
+        );
+        let report_context = json!({
+            "simulated_cache_enabled": true,
+            "simulated_cache_min_hit_basis_points": 8_410,
+            "simulated_cache_max_hit_basis_points": 8_410,
+            "input_tokens": 63_000,
+            "cache_read_input_tokens": 63_000,
+        });
+        let mut summary = Some(ExecutionStreamTerminalSummary {
+            standardized_usage: Some(StandardizedUsage {
+                input_tokens: 74_901,
+                output_tokens: 36,
+                ..StandardizedUsage::new()
+            }),
+            ..ExecutionStreamTerminalSummary::default()
+        });
+
+        maybe_apply_simulated_cache_usage_to_stream_summary(
+            &state,
+            &plan,
+            Some(&report_context),
+            &mut summary,
+        )
+        .await;
+
+        let usage = summary
+            .as_ref()
+            .and_then(|summary| summary.standardized_usage.as_ref())
+            .expect("usage should exist");
+        assert_eq!(usage.input_tokens, 74_901);
+        assert_eq!(usage.cache_read_tokens, 63_000);
+        assert_eq!(usage.output_tokens, 36);
     }
 
     #[tokio::test]

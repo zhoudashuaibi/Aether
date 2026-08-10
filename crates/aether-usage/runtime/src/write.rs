@@ -1017,8 +1017,11 @@ pub fn build_sync_terminal_usage_seed(
     let derived_standardized_usage = provider_response_full
         .as_ref()
         .map(|response| map_usage_from_response(response, context_seed.provider_contract.as_str()));
-    let standardized_usage =
-        merge_standardized_usage_with_context_cache(standardized_usage, derived_standardized_usage);
+    let standardized_usage = merge_standardized_usage_with_context_cache(
+        standardized_usage,
+        derived_standardized_usage,
+        context_seed.provider_contract.as_str(),
+    );
     let terminal_state = infer_sync_terminal_state(
         report_kind.as_str(),
         status_code,
@@ -1079,6 +1082,7 @@ pub fn build_sync_terminal_usage_seed(
 fn merge_standardized_usage_with_context_cache(
     context_usage: Option<StandardizedUsage>,
     derived_usage: Option<StandardizedUsage>,
+    provider_contract: &str,
 ) -> Option<StandardizedUsage> {
     let Some(context_usage) = context_usage else {
         return derived_usage;
@@ -1093,9 +1097,13 @@ fn merge_standardized_usage_with_context_cache(
         .saturating_add(cache_creation_tokens)
         .saturating_add(cache_read_tokens);
     let total_input = usage.input_tokens.max(0).max(context_total_input);
-    usage.input_tokens = total_input
-        .saturating_sub(cache_creation_tokens)
-        .saturating_sub(cache_read_tokens);
+    usage.input_tokens = if api_format_reports_gross_input_tokens(provider_contract) {
+        total_input
+    } else {
+        total_input
+            .saturating_sub(cache_creation_tokens)
+            .saturating_sub(cache_read_tokens)
+    };
     usage.cache_creation_tokens = cache_creation_tokens;
     usage.cache_creation_ephemeral_5m_tokens =
         context_usage.cache_creation_ephemeral_5m_tokens.max(0);
@@ -1103,6 +1111,19 @@ fn merge_standardized_usage_with_context_cache(
         context_usage.cache_creation_ephemeral_1h_tokens.max(0);
     usage.cache_read_tokens = cache_read_tokens;
     Some(usage)
+}
+
+fn api_format_reports_gross_input_tokens(api_format: &str) -> bool {
+    matches!(
+        api_format
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "openai" | "gemini" | "google"
+    )
 }
 
 pub fn build_stream_terminal_usage_seed(
@@ -1985,12 +2006,23 @@ fn simulated_cache_standardized_usage_from_context(
     };
     let cache_read_tokens = context_u64(context, "cache_read_input_tokens").unwrap_or(0);
     let mut usage = StandardizedUsage::new();
-    usage.input_tokens = input_tokens
-        .saturating_sub(cache_creation_tokens)
-        .saturating_sub(cache_read_tokens) as i64;
+    usage.input_tokens = if simulated_cache_reports_gross_input_tokens(context) {
+        input_tokens
+    } else {
+        input_tokens
+            .saturating_sub(cache_creation_tokens)
+            .saturating_sub(cache_read_tokens)
+    } as i64;
     usage.cache_creation_tokens = cache_creation_tokens as i64;
     usage.cache_read_tokens = cache_read_tokens as i64;
     Some(usage)
+}
+
+fn simulated_cache_reports_gross_input_tokens(context: Option<&Map<String, Value>>) -> bool {
+    let api_format = ["provider_api_format", "client_api_format"]
+        .into_iter()
+        .find_map(|key| context_string(context, key));
+    api_format_reports_gross_input_tokens(api_format.as_deref().unwrap_or_default())
 }
 
 fn context_has_inline_body(context: Option<&Map<String, Value>>, key: &str) -> bool {
@@ -6440,11 +6472,11 @@ mod tests {
                 .expect("usage event should build");
 
         assert_eq!(event.event_type, UsageEventType::Completed);
-        assert_eq!(event.data.input_tokens, Some(1900));
+        assert_eq!(event.data.input_tokens, Some(2200));
         assert_eq!(event.data.output_tokens, Some(100));
         assert_eq!(event.data.cache_creation_input_tokens, None);
         assert_eq!(event.data.cache_read_input_tokens, Some(300));
-        assert_eq!(event.data.total_tokens, Some(2000));
+        assert_eq!(event.data.total_tokens, Some(2300));
     }
 
     #[test]

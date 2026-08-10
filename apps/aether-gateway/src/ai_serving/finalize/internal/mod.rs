@@ -12,7 +12,9 @@ pub(crate) mod sync;
 #[path = "sync_to_stream.rs"]
 pub(crate) mod sync_to_stream;
 
-pub(crate) use stream::LocalStreamRewriter;
+pub(crate) use stream::{
+    apply_simulated_cache_usage_to_openai_responses_body, LocalStreamRewriter,
+};
 pub(crate) use sync::LocalCoreSyncFinalizeOutcome;
 pub(crate) use sync_to_stream::{
     maybe_bridge_standard_sync_json_to_stream, SyncToStreamBridgeOutcome,

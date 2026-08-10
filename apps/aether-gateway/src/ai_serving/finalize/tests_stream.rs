@@ -2,7 +2,9 @@ use serde_json::json;
 
 use crate::ai_serving::maybe_bridge_standard_sync_json_to_stream;
 
-use super::maybe_build_local_stream_rewriter;
+use super::{
+    apply_simulated_cache_usage_to_openai_responses_body, maybe_build_local_stream_rewriter,
+};
 
 fn utf8(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).expect("utf8 should decode")
@@ -45,6 +47,81 @@ data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
     assert!(output_text.contains("\"name\":\"Read\""));
     assert!(output_text.contains("\\\"file_path\\\":\\\"/tmp/a.txt\\\""));
     assert!(!output_text.contains("\\\"pages\\\":\\\"\\\""));
+}
+
+#[test]
+fn simulated_cache_stream_rewriter_injects_responses_cached_tokens_across_chunks() {
+    let report_context = json!({
+        "provider_api_format": "openai:responses",
+        "client_api_format": "openai:responses",
+        "simulated_cache_enabled": true,
+        "cache_read_input_tokens": 63000,
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+
+    let first = rewriter
+        .push_chunk(
+            b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":74901,",
+        )
+        .expect("partial terminal event should be accepted");
+    assert!(first.is_empty());
+
+    let output = rewriter
+        .push_chunk(b"\"output_tokens\":36,\"total_tokens\":74937}}}\n\n")
+        .expect("terminal event should be rewritten");
+    let output = utf8(output);
+    assert!(output.contains("\"input_tokens\":74901"));
+    assert!(output.contains("\"cached_tokens\":63000"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
+fn simulated_cache_sync_response_is_unchanged_without_simulated_cache() {
+    let report_context = json!({
+        "cache_read_input_tokens": 63000,
+    });
+    let mut response = json!({
+        "usage": {
+            "input_tokens": 74901,
+            "output_tokens": 36,
+            "total_tokens": 74937
+        }
+    });
+
+    assert!(!apply_simulated_cache_usage_to_openai_responses_body(
+        &mut response,
+        "openai:responses",
+        Some(&report_context),
+    ));
+    assert!(response["usage"].get("input_tokens_details").is_none());
+}
+
+#[test]
+fn simulated_cache_sync_response_rewrite_preserves_gross_input_tokens() {
+    let report_context = json!({
+        "simulated_cache_enabled": true,
+        "cache_read_input_tokens": 63000,
+    });
+    let mut response = json!({
+        "id": "resp_123",
+        "usage": {
+            "input_tokens": 74901,
+            "output_tokens": 36,
+            "total_tokens": 74937
+        }
+    });
+
+    assert!(apply_simulated_cache_usage_to_openai_responses_body(
+        &mut response,
+        "openai:responses",
+        Some(&report_context),
+    ));
+    assert_eq!(response["usage"]["input_tokens"], 74901);
+    assert_eq!(
+        response["usage"]["input_tokens_details"]["cached_tokens"],
+        63000
+    );
 }
 
 #[test]
