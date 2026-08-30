@@ -1,14 +1,13 @@
 use serde_json::Value;
 
-use aether_ai_formats::formats::openai::simulated_cache::SimulatedCacheUsageStreamRewriter;
+pub(crate) use crate::ai_serving::api::apply_simulated_cache_usage_to_openai_responses_body;
 
+use crate::ai_serving::api::SimulatedCacheUsageStreamRewriter;
 use crate::ai_serving::{
     maybe_build_ai_surface_stream_rewriter, AiSurfaceFinalizeError, AiSurfaceStreamRewriter,
     ResponseHistoryRecord,
 };
 use crate::GatewayError;
-
-pub(crate) use aether_ai_formats::formats::openai::simulated_cache::apply_simulated_cache_usage_to_openai_responses_body;
 
 pub(crate) struct LocalStreamRewriter<'a> {
     inner: Option<AiSurfaceStreamRewriter<'a>>,

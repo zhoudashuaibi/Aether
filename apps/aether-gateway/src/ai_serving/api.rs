@@ -68,6 +68,11 @@ pub(crate) use aether_ai_formats::api::{
     OPENAI_VIDEO_CONTENT_PLAN_KIND, OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
+/// Simulated cache usage propagation re-exported so gateway internals reach
+/// `aether_ai_formats` through this seam.
+pub(crate) use aether_ai_formats::formats::openai::simulated_cache::{
+    apply_simulated_cache_usage_to_openai_responses_body, SimulatedCacheUsageStreamRewriter,
+};
 pub(crate) use aether_ai_formats::protocol::stream::CanonicalUsage as StreamingCanonicalUsage;
 /// Codex client identity headers re-exported for out-of-crate probe binaries,
 /// which must reach `aether_ai_formats` through this seam.
