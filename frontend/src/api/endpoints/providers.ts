@@ -51,11 +51,14 @@ function normalizeProviderSummary(
     ...provider,
     chat_pii_redaction: normalizeChatPiiRedactionProvider(provider.chat_pii_redaction),
     pool_advanced: normalizePoolAdvanced(provider.pool_advanced),
+    codex_fingerprint_convergence_enabled: provider.codex_fingerprint_convergence_enabled ?? false,
     simulated_cache_enabled: provider.simulated_cache_enabled ?? false,
     simulated_cache_min_hit_percentage: provider.simulated_cache_min_hit_percentage,
     simulated_cache_max_hit_percentage: provider.simulated_cache_max_hit_percentage,
+    kiro_simulated_cache_enabled: provider.kiro_simulated_cache_enabled ?? false,
     max_transfer_count: provider.max_transfer_count ?? 0,
     max_transfer_timeout_seconds: provider.max_transfer_timeout_seconds ?? 0,
+    responses_websocket_enabled: provider.responses_websocket_enabled ?? false,
   }
 }
 
@@ -116,6 +119,7 @@ export async function updateProvider(
     website: string
     provider_priority: number
     keep_priority_on_conversion: boolean
+    responses_websocket_enabled: boolean
     billing_type: 'monthly_quota' | 'pay_as_you_go' | 'free_tier'
     monthly_quota_usd: number
     quota_reset_day: number
@@ -132,6 +136,7 @@ export async function updateProvider(
     enable_format_conversion: boolean  // 是否允许格式转换（提供商级别开关）
     is_active: boolean
     claude_code_advanced: ClaudeCodeAdvancedConfig | null
+    codex_fingerprint_convergence_enabled: boolean
     pool_advanced: PoolAdvancedConfig | null
     failover_rules: FailoverRulesConfig | null
     config: ProviderConfig | null
@@ -158,6 +163,7 @@ export async function createProvider(
     quota_expires_at?: string
     provider_priority?: number
     keep_priority_on_conversion?: boolean
+    responses_websocket_enabled?: boolean
     is_active?: boolean
     max_retries?: number
     max_transfer_count?: number
@@ -166,6 +172,7 @@ export async function createProvider(
     request_timeout?: number | null
     proxy?: ProxyConfig | null
     claude_code_advanced?: ClaudeCodeAdvancedConfig | null
+    codex_fingerprint_convergence_enabled?: boolean
     pool_advanced?: PoolAdvancedConfig | null
     failover_rules?: FailoverRulesConfig | null
     config?: ProviderConfig | null

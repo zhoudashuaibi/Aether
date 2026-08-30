@@ -59,8 +59,9 @@ pub(crate) mod windsurf {
 }
 
 pub(crate) use aether_provider_transport::{
-    append_transport_diagnostics_to_value, apply_local_auth_config_header_overrides,
-    apply_local_body_rules, apply_local_body_rules_with_request_headers, apply_local_header_rules,
+    append_transport_diagnostics_to_value, apply_codex_oauth_fingerprint_convergence,
+    apply_local_auth_config_header_overrides, apply_local_body_rules,
+    apply_local_body_rules_with_request_headers, apply_local_header_rules,
     apply_local_header_rules_with_request_headers, apply_standard_provider_request_body_rules,
     apply_standard_provider_request_body_rules_with_request_headers,
     apply_transport_request_body_semantics, body_rules_are_locally_supported,
@@ -74,6 +75,7 @@ pub(crate) use aether_provider_transport::{
     build_request_trace_proxy_value, build_same_format_provider_headers,
     build_same_format_provider_request_body,
     build_same_format_provider_request_body_with_compatibility_report,
+    build_same_format_provider_request_body_with_compatibility_report_and_reasoning_replay_policy,
     build_same_format_provider_upstream_url, build_standard_plan_fallback_headers,
     build_standard_plan_fallback_openai_chat_url,
     build_standard_plan_fallback_openai_responses_url, build_standard_provider_request_headers,
