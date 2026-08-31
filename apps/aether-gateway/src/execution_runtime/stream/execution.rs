@@ -1521,6 +1521,11 @@ fn should_use_direct_sse_passthrough(
     if maybe_build_provider_private_stream_normalizer(report_context).is_some() {
         return false;
     }
+    if simulated_cache_config_from_report_context(report_context).is_some()
+        || kiro_simulated_cache_enabled_from_report_context(report_context)
+    {
+        return false;
+    }
     let normalized_stream_report_context =
         normalize_provider_private_report_context(report_context);
     if maybe_build_stream_response_rewriter(normalized_stream_report_context.as_ref()).is_some() {
@@ -2674,6 +2679,18 @@ async fn record_stream_pending_lifecycle(
     );
 }
 
+fn should_seed_stream_simulated_cache_config_before_upstream(
+    plan: &ExecutionPlan,
+    plan_kind: &str,
+) -> bool {
+    plan_kind == OPENAI_CHAT_STREAM_PLAN_KIND
+        && !is_openai_responses_family_format(plan.provider_api_format.as_str())
+        && !is_openai_responses_family_format(plan.client_api_format.as_str())
+        && plan
+            .provider_api_format
+            .eq_ignore_ascii_case(plan.client_api_format.as_str())
+}
+
 fn should_defer_stream_pending_for_direct_inline(
     state: &AppState,
     plan: &ExecutionPlan,
@@ -3691,6 +3708,12 @@ async fn execute_execution_runtime_stream_inner(
         "stream_candidate_slot",
         candidate_slot_started_at.elapsed().as_millis() as u64,
     );
+    // Direct same-format OpenAI Chat streams are selected before the response finalizer sees
+    // the status code. Seed only the configuration here so the selector can keep them on the
+    // rewrite path; cache hit tokens are still computed after a successful response.
+    if should_seed_stream_simulated_cache_config_before_upstream(&plan, plan_kind) {
+        seed_stream_simulated_cache_config(state, &plan, &mut report_context).await;
+    }
     let request_candidate_status_snapshot =
         snapshot_local_request_candidate_status(&plan, report_context.as_ref());
     let defer_stream_pending_for_direct_inline = should_defer_stream_pending_for_direct_inline(
@@ -11696,6 +11719,33 @@ mod tests {
             parse_direct_passthrough_mode("mpsc"),
             DirectPassthroughMode::Legacy
         );
+    }
+
+    #[test]
+    fn seeds_simulated_cache_config_before_same_format_openai_chat_upstream() {
+        let mut plan = direct_stream_test_plan(
+            "simulated-cache-early-seed",
+            "https://example.com/v1/chat/completions".to_string(),
+        );
+        plan.client_api_format = "openai:chat".to_string();
+        plan.provider_api_format = "openai:chat".to_string();
+        assert!(should_seed_stream_simulated_cache_config_before_upstream(
+            &plan,
+            OPENAI_CHAT_STREAM_PLAN_KIND,
+        ));
+
+        plan.provider_api_format = "openai:responses".to_string();
+        assert!(!should_seed_stream_simulated_cache_config_before_upstream(
+            &plan,
+            OPENAI_CHAT_STREAM_PLAN_KIND,
+        ));
+
+        plan.provider_api_format = "openai:chat".to_string();
+        plan.client_api_format = "claude:messages".to_string();
+        assert!(!should_seed_stream_simulated_cache_config_before_upstream(
+            &plan,
+            OPENAI_CHAT_STREAM_PLAN_KIND,
+        ));
     }
 
     #[test]

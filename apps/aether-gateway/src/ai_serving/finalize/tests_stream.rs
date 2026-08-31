@@ -2,9 +2,7 @@ use serde_json::json;
 
 use crate::ai_serving::maybe_bridge_standard_sync_json_to_stream;
 
-use super::{
-    apply_simulated_cache_usage_to_openai_responses_body, maybe_build_local_stream_rewriter,
-};
+use super::{apply_simulated_cache_usage_to_openai_body, maybe_build_local_stream_rewriter};
 
 fn utf8(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).expect("utf8 should decode")
@@ -77,6 +75,34 @@ fn simulated_cache_stream_rewriter_injects_responses_cached_tokens_across_chunks
 }
 
 #[test]
+fn simulated_cache_stream_rewriter_injects_chat_cached_tokens_across_chunks() {
+    let report_context = json!({
+        "provider_api_format": "openai:responses",
+        "client_api_format": "openai:chat",
+        "simulated_cache_enabled": true,
+        "cache_read_input_tokens": 63000,
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+
+    let first = rewriter
+        .push_chunk(
+            b"data: {\"id\":\"chatcmpl_123\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":74901,",
+        )
+        .expect("partial usage chunk should be accepted");
+    assert!(first.is_empty());
+
+    let output = rewriter
+        .push_chunk(b"\"completion_tokens\":36,\"total_tokens\":74937}}\n\n")
+        .expect("usage chunk should be rewritten");
+    let output = utf8(output);
+    assert!(output.contains("\"prompt_tokens\":74901"));
+    assert!(output.contains("\"prompt_tokens_details\":{\"cached_tokens\":63000}"));
+    assert!(!output.contains("input_tokens_details"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
 fn simulated_cache_sync_response_is_unchanged_without_simulated_cache() {
     let report_context = json!({
         "cache_read_input_tokens": 63000,
@@ -89,11 +115,40 @@ fn simulated_cache_sync_response_is_unchanged_without_simulated_cache() {
         }
     });
 
-    assert!(!apply_simulated_cache_usage_to_openai_responses_body(
+    assert!(!apply_simulated_cache_usage_to_openai_body(
         &mut response,
         "openai:responses",
         Some(&report_context),
     ));
+    assert!(response["usage"].get("input_tokens_details").is_none());
+}
+
+#[test]
+fn simulated_cache_sync_chat_response_rewrite_uses_prompt_tokens_details() {
+    let report_context = json!({
+        "simulated_cache_enabled": true,
+        "cache_read_input_tokens": 63000,
+    });
+    let mut response = json!({
+        "id": "chatcmpl_123",
+        "object": "chat.completion",
+        "usage": {
+            "prompt_tokens": 74901,
+            "completion_tokens": 36,
+            "total_tokens": 74937
+        }
+    });
+
+    assert!(apply_simulated_cache_usage_to_openai_body(
+        &mut response,
+        "openai:chat",
+        Some(&report_context),
+    ));
+    assert_eq!(response["usage"]["prompt_tokens"], 74901);
+    assert_eq!(
+        response["usage"]["prompt_tokens_details"]["cached_tokens"],
+        63000
+    );
     assert!(response["usage"].get("input_tokens_details").is_none());
 }
 
@@ -112,7 +167,7 @@ fn simulated_cache_sync_response_rewrite_preserves_gross_input_tokens() {
         }
     });
 
-    assert!(apply_simulated_cache_usage_to_openai_responses_body(
+    assert!(apply_simulated_cache_usage_to_openai_body(
         &mut response,
         "openai:responses",
         Some(&report_context),

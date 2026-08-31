@@ -34,7 +34,7 @@ use crate::ai_serving::api::{
     implicit_sync_finalize_report_kind, maybe_build_sync_finalize_outcome, LocalCoreSyncErrorKind,
     LocalCoreSyncFinalizeOutcome,
 };
-use crate::ai_serving::apply_simulated_cache_usage_to_openai_responses_body;
+use crate::ai_serving::apply_simulated_cache_usage_to_openai_body;
 use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
     build_client_response_from_parts_with_mutator,
@@ -3140,7 +3140,7 @@ async fn execute_execution_runtime_sync_impl(
     let mut client_body_json = body_json.clone();
     let mut client_body_bytes = body_bytes;
     let simulated_cache_rewritten = client_body_json.as_mut().is_some_and(|body| {
-        apply_simulated_cache_usage_to_openai_responses_body(
+        apply_simulated_cache_usage_to_openai_body(
             body,
             plan.client_api_format.as_str(),
             report_context.as_ref(),

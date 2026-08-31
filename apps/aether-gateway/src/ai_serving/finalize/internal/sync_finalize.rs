@@ -1,3 +1,4 @@
+use crate::ai_serving::api::apply_simulated_cache_usage_to_openai_body;
 use crate::ai_serving::GatewayControlDecision;
 use crate::ai_serving::{build_generated_tool_call_id, canonicalize_tool_arguments};
 use crate::{usage::GatewaySyncReportRequest, GatewayError};
@@ -58,10 +59,20 @@ pub(crate) fn maybe_build_local_core_sync_finalize_response(
 
     match product {
         StandardSyncFinalizeNormalizedProduct::SuccessBody(body_json) => {
-            let Some(body_json) = unwrap_local_finalize_response_value(body_json, report_context)
+            let Some(mut body_json) =
+                unwrap_local_finalize_response_value(body_json, report_context)
             else {
                 return Ok(None);
             };
+            let client_api_format = report_context
+                .get("client_api_format")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            apply_simulated_cache_usage_to_openai_body(
+                &mut body_json,
+                client_api_format,
+                Some(report_context),
+            );
             Ok(Some(build_local_success_outcome(
                 trace_id, decision, payload, body_json,
             )?))
@@ -72,11 +83,21 @@ pub(crate) fn maybe_build_local_core_sync_finalize_response(
             else {
                 return Ok(None);
             };
+            let mut client_body_json = product.client_body_json;
+            let client_api_format = report_context
+                .get("client_api_format")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            apply_simulated_cache_usage_to_openai_body(
+                &mut client_body_json,
+                client_api_format,
+                Some(report_context),
+            );
             Ok(Some(build_local_success_outcome_with_conversion_report(
                 trace_id,
                 decision,
                 payload,
-                product.client_body_json,
+                client_body_json,
                 provider_body_json,
             )?))
         }

@@ -71,7 +71,7 @@ pub(crate) use aether_ai_formats::api::{
 /// Simulated cache usage propagation re-exported so gateway internals reach
 /// `aether_ai_formats` through this seam.
 pub(crate) use aether_ai_formats::formats::openai::simulated_cache::{
-    apply_simulated_cache_usage_to_openai_responses_body, SimulatedCacheUsageStreamRewriter,
+    apply_simulated_cache_usage_to_openai_body, SimulatedCacheUsageStreamRewriter,
 };
 pub(crate) use aether_ai_formats::protocol::stream::CanonicalUsage as StreamingCanonicalUsage;
 /// Codex client identity headers re-exported for out-of-crate probe binaries,

@@ -1,23 +1,66 @@
 use serde_json::{Map, Value};
 
-/// 将模拟缓存读 tokens 写入 OpenAI Responses 同步响应 usage。
+/// 将模拟缓存读 tokens 写入 OpenAI Chat 或 Responses 同步响应 usage。
+pub fn apply_simulated_cache_usage_to_openai_body(
+    body: &mut Value,
+    client_api_format: &str,
+    report_context: Option<&Value>,
+) -> bool {
+    let Some(format) = OpenAiUsageFormat::from_api_format(client_api_format) else {
+        return false;
+    };
+    let Some(cache_read_tokens) = simulated_cache_read_tokens(report_context) else {
+        return false;
+    };
+    apply_cached_tokens_to_openai_usage(body, format, cache_read_tokens)
+}
+
+/// Backward-compatible name retained for callers that only handled Responses before Chat support.
 pub fn apply_simulated_cache_usage_to_openai_responses_body(
     body: &mut Value,
     client_api_format: &str,
     report_context: Option<&Value>,
 ) -> bool {
-    if !is_openai_responses_api_format(client_api_format) {
-        return false;
-    }
-    let Some(cache_read_tokens) = simulated_cache_read_tokens(report_context) else {
-        return false;
-    };
-    apply_cached_tokens_to_openai_responses_usage(body, cache_read_tokens)
+    apply_simulated_cache_usage_to_openai_body(body, client_api_format, report_context)
 }
 
 const MAX_SIMULATED_CACHE_SSE_RECORD_BYTES: usize = 2 * 1024 * 1024;
 
+#[derive(Clone, Copy)]
+enum OpenAiUsageFormat {
+    Chat,
+    Responses,
+}
+
+impl OpenAiUsageFormat {
+    fn from_api_format(api_format: &str) -> Option<Self> {
+        let api_format = api_format.trim().to_ascii_lowercase();
+        if api_format.starts_with("openai:responses") {
+            Some(Self::Responses)
+        } else if api_format.starts_with("openai:chat") {
+            Some(Self::Chat)
+        } else {
+            None
+        }
+    }
+
+    fn input_tokens_key(self) -> &'static str {
+        match self {
+            Self::Chat => "prompt_tokens",
+            Self::Responses => "input_tokens",
+        }
+    }
+
+    fn details_key(self) -> &'static str {
+        match self {
+            Self::Chat => "prompt_tokens_details",
+            Self::Responses => "input_tokens_details",
+        }
+    }
+}
+
 pub struct SimulatedCacheUsageStreamRewriter {
+    format: OpenAiUsageFormat,
     cache_read_tokens: u64,
     buffered: Vec<u8>,
     passthrough_after_oversize_record: bool,
@@ -27,8 +70,10 @@ impl SimulatedCacheUsageStreamRewriter {
     pub fn from_report_context(report_context: Option<&Value>) -> Option<Self> {
         let context = report_context?.as_object()?;
         let client_api_format = context.get("client_api_format").and_then(Value::as_str)?;
+        let format = OpenAiUsageFormat::from_api_format(client_api_format)?;
         let cache_read_tokens = simulated_cache_read_tokens(report_context)?;
-        is_openai_responses_api_format(client_api_format).then_some(Self {
+        Some(Self {
+            format,
             cache_read_tokens,
             buffered: Vec::new(),
             passthrough_after_oversize_record: false,
@@ -53,6 +98,7 @@ impl SimulatedCacheUsageStreamRewriter {
             output.extend(rewrite_sse_record_cached_tokens(
                 &record,
                 self.cache_read_tokens,
+                self.format,
             ));
         }
 
@@ -71,7 +117,7 @@ impl SimulatedCacheUsageStreamRewriter {
         if self.passthrough_after_oversize_record {
             buffered
         } else {
-            rewrite_sse_record_cached_tokens(&buffered, self.cache_read_tokens)
+            rewrite_sse_record_cached_tokens(&buffered, self.cache_read_tokens, self.format)
         }
     }
 }
@@ -87,26 +133,35 @@ fn simulated_cache_read_tokens(report_context: Option<&Value>) -> Option<u64> {
         .filter(|tokens| *tokens > 0)
 }
 
-fn is_openai_responses_api_format(api_format: &str) -> bool {
-    api_format
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with("openai:responses")
-}
-
-fn apply_cached_tokens_to_openai_responses_usage(body: &mut Value, cache_read_tokens: u64) -> bool {
+fn apply_cached_tokens_to_openai_usage(
+    body: &mut Value,
+    format: OpenAiUsageFormat,
+    cache_read_tokens: u64,
+) -> bool {
     let Some(body) = body.as_object_mut() else {
         return false;
     };
     let Some(usage) = body.get_mut("usage").and_then(Value::as_object_mut) else {
         return false;
     };
-    if usage.get("input_tokens").and_then(Value::as_u64).is_none() {
+    apply_cached_tokens_to_openai_usage_object(usage, format, cache_read_tokens)
+}
+
+fn apply_cached_tokens_to_openai_usage_object(
+    usage: &mut Map<String, Value>,
+    format: OpenAiUsageFormat,
+    cache_read_tokens: u64,
+) -> bool {
+    if usage
+        .get(format.input_tokens_key())
+        .and_then(Value::as_u64)
+        .is_none()
+    {
         return false;
     }
 
     let details = usage
-        .entry("input_tokens_details".to_string())
+        .entry(format.details_key().to_string())
         .or_insert_with(|| Value::Object(Map::new()));
     let Some(details) = details.as_object_mut() else {
         return false;
@@ -127,7 +182,11 @@ fn find_sse_record_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
     None
 }
 
-fn rewrite_sse_record_cached_tokens(record: &[u8], cache_read_tokens: u64) -> Vec<u8> {
+fn rewrite_sse_record_cached_tokens(
+    record: &[u8],
+    cache_read_tokens: u64,
+    format: OpenAiUsageFormat,
+) -> Vec<u8> {
     let Ok(record) = std::str::from_utf8(record) else {
         return record.to_vec();
     };
@@ -152,15 +211,28 @@ fn rewrite_sse_record_cached_tokens(record: &[u8], cache_read_tokens: u64) -> Ve
             output.push_str(line);
             continue;
         };
-        if event.get("type").and_then(Value::as_str) != Some("response.completed") {
-            output.push_str(line);
-            continue;
-        }
-        let Some(response) = event.get_mut("response") else {
+        let Some(usage_body) = (match format {
+            OpenAiUsageFormat::Responses => {
+                if event.get("type").and_then(Value::as_str) != Some("response.completed") {
+                    None
+                } else {
+                    event.get_mut("response")
+                }
+            }
+            OpenAiUsageFormat::Chat => event.get_mut("usage"),
+        }) else {
             output.push_str(line);
             continue;
         };
-        if !apply_cached_tokens_to_openai_responses_usage(response, cache_read_tokens) {
+        let rewritten = match format {
+            OpenAiUsageFormat::Responses => {
+                apply_cached_tokens_to_openai_usage(usage_body, format, cache_read_tokens)
+            }
+            OpenAiUsageFormat::Chat => usage_body.as_object_mut().is_some_and(|usage| {
+                apply_cached_tokens_to_openai_usage_object(usage, format, cache_read_tokens)
+            }),
+        };
+        if !rewritten {
             output.push_str(line);
             continue;
         }
