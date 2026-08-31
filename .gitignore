@@ -12,6 +12,7 @@
 .gemini*/
 .plans
 .playwright-mcp/
+.pi-subagents/
 
 ### Python ###
 *.db
