@@ -224,7 +224,7 @@ fn rewrite_sse_record_cached_tokens(
             output.push_str(line);
             continue;
         };
-        let rewritten = match format {
+        let did_rewrite = match format {
             OpenAiUsageFormat::Responses => {
                 apply_cached_tokens_to_openai_usage(usage_body, format, cache_read_tokens)
             }
@@ -232,7 +232,7 @@ fn rewrite_sse_record_cached_tokens(
                 apply_cached_tokens_to_openai_usage_object(usage, format, cache_read_tokens)
             }),
         };
-        if !rewritten {
+        if !did_rewrite {
             output.push_str(line);
             continue;
         }
