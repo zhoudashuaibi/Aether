@@ -3186,7 +3186,9 @@ async fn execute_execution_runtime_sync_impl(
         body_base64,
         telemetry,
     );
-    usage_payload.client_body_json = client_body_json;
+    if simulated_cache_rewritten {
+        usage_payload.client_body_json = client_body_json;
+    }
     if status_code < 400 {
         apply_sync_success_effects(
             state,
