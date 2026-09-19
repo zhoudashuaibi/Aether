@@ -200,3 +200,16 @@ fn multiline_sse_usage_preserves_event_metadata() {
         500
     );
 }
+
+#[test]
+fn explicit_null_usage_does_not_reuse_nested_usage_as_actual_input() {
+    let response = json!({"usage":null,"response":{"usage":{"input_tokens":300}}});
+    assert_eq!(
+        response_gross_input_tokens(&response, "openai:responses"),
+        None
+    );
+    assert_eq!(
+        response_gross_input_tokens(&json!({"usage":{"input_tokens":0}}), "openai:responses"),
+        Some(0)
+    );
+}

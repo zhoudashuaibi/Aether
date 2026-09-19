@@ -147,10 +147,11 @@ pub fn supports_simulated_cache(api_format: &str) -> bool {
 /// None distinguishes missing usage from a real zero-token response.
 pub fn response_gross_input_tokens(body: &Value, api_format: &str) -> Option<u64> {
     let format = UsageFormat::parse(api_format)?;
-    if let Some(usage) = body.get(format.usage_key()).and_then(Value::as_object) {
-        if let Some(input) = format.gross_input(usage) {
-            return Some(input);
-        }
+    if let Some(usage) = body.get(format.usage_key()) {
+        // A present null usage blocks lookup into nested or stale response envelopes.
+        return usage
+            .as_object()
+            .and_then(|usage| format.gross_input(usage));
     }
     ["response", "message", "interaction"]
         .into_iter()
