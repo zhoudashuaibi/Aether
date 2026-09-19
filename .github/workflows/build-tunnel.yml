@@ -65,14 +65,6 @@ jobs:
             target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             use_cross: true
-          - name: macos-amd64
-            target: x86_64-apple-darwin
-            os: macos-15-intel
-            use_cross: false
-          - name: macos-arm64
-            target: aarch64-apple-darwin
-            os: macos-15
-            use_cross: false
           - name: windows-amd64
             target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -232,8 +224,6 @@ jobs:
           TABLE+="| Linux ARM64 (GNU) | [aether-tunnel-linux-arm64.tar.gz](${BASE}/aether-tunnel-linux-arm64.tar.gz) |\n"
           TABLE+="| Linux x86_64 (musl) | [aether-tunnel-linux-musl-amd64.tar.gz](${BASE}/aether-tunnel-linux-musl-amd64.tar.gz) |\n"
           TABLE+="| Linux ARM64 (musl) | [aether-tunnel-linux-musl-arm64.tar.gz](${BASE}/aether-tunnel-linux-musl-arm64.tar.gz) |\n"
-          TABLE+="| macOS x86_64 | [aether-tunnel-macos-amd64.tar.gz](${BASE}/aether-tunnel-macos-amd64.tar.gz) |\n"
-          TABLE+="| macOS ARM64 | [aether-tunnel-macos-arm64.tar.gz](${BASE}/aether-tunnel-macos-arm64.tar.gz) |\n"
           TABLE+="| Windows x86_64 | [aether-tunnel-windows-amd64.zip](${BASE}/aether-tunnel-windows-amd64.zip) |"
 
           # Replace content between markers

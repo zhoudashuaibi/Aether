@@ -23,7 +23,7 @@
 
 ## Release and CI (fork specifics)
 - This fork (`zhoudashuaibi/Aether`) syncs from upstream `fawney19/Aether` and publishes its own releases: tag `v0.1.N` on `main` triggers `.github/workflows/release.yml`, which pushes the Docker image to `ghcr.io/zhoudashuaibi/aether`. Keep the fork's GHCR branding and `GHCR_TOKEN` wiring intact when merging upstream.
-- **macOS release builds are not needed.** Deployment is Linux Docker only. When touching `release.yml` (e.g. after an upstream merge), remove the `macos-amd64`/`macos-arm64` matrix entries and the mac tarball packaging instead of keeping them: the `macos-15-intel` runner takes ~50 minutes and gates the whole release. Do not wait on or fix macOS-only build issues.
+- **macOS builds are not needed**, including the separate `build-tunnel.yml` workflow. Deployment is Linux Docker only. When merging upstream workflows, remove macOS matrix entries and mac tarball/download-table entries: the macOS Intel runner can take ~50 minutes and gate the whole release. Do not wait on or fix macOS-only build issues.
 - Do not build Rust locally before pushing (disk constraints); rely on GitHub Actions (Rust CI on `main`, Release on tags) and iterate there. `cargo fmt --all --check` and `cargo metadata --locked` are safe locally.
 
 ## Read before sensitive changes
