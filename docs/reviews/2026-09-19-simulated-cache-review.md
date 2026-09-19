@@ -72,4 +72,11 @@ https://github.com/googleapis/python-genai/blob/main/google/genai/_gaos/types/in
 - 本轮网关测试：5,325 项库测试和 83 项二进制测试全部通过，均无跳过；包括此前失败的 full 响应体捕获断言。
 - 本轮 workspace 其余包测试：3,780 项通过、30 项跳过。新增的跨协议模拟缓存、显式空 usage 和终态计量回归均通过。
 - 集成测试已通过，包括 `simulated_cache_websocket_usage_matches_billing_with_pii_enabled`：启动真实 gateway、mock upstream 与测试 PostgreSQL，在开启 PII 的两轮 Responses WebSocket 对话中核对客户端 usage 与数据库计费。
-- 没有执行真实供应商调用、服务器更新、容器部署或发布 tag。GitHub Actions 中的集成测试使用 mock upstream 与测试 PostgreSQL。
+- 审查与修复阶段没有执行真实供应商调用、服务器更新、容器部署或发布 tag。GitHub Actions 中的集成测试使用 mock upstream 与测试 PostgreSQL。
+
+## 2026-09-20 正式发布
+
+- 用户要求构建新版后，从提交 `143722b0ce399750f71b04c536a4ad917e279bc9` 推送 `v0.1.33` 标签。新增 `Cross.toml`，显式透传 `AETHER_VERSION` 和 `AETHER_BUILD_TYPE` 到交叉编译容器。
+- [Release Aether 35456251966](https://github.com/zhoudashuaibi/Aether/actions/runs/35456251966) 全部成功；[v0.1.33](https://github.com/zhoudashuaibi/Aether/releases/tag/v0.1.33) 已发布并成为 GitHub 最新稳定版，包含 Linux amd64/arm64 安装包、VSIX、校验和及 provenance。
+- 已直接读取 GHCR manifest，确认 `ghcr.io/zhoudashuaibi/aether:0.1.33` 与 `:latest` 同为 `sha256:5e9015db079d9334182e8460d714fba6cb153248620107c67dda0f595895cac2`，包含 `linux/amd64`、`linux/arm64`。
+- 独立的 GitHub Pages 工作流因仓库未启用 Pages 而失败，不影响以上镜像和 Release 发布。未启用 Pages，也未操作用户服务器或重建其运行中的容器。
