@@ -17,6 +17,7 @@ pub mod kiro;
 mod network;
 pub mod oauth_refresh;
 mod openai_image;
+mod outbound_request_policy;
 pub mod policy;
 pub mod provider_types;
 mod request_body;
@@ -29,6 +30,7 @@ pub mod url;
 pub mod vertex;
 mod video;
 pub mod windsurf;
+pub mod xai;
 
 pub use aether_oauth as oauth;
 pub use agent_identity::{
@@ -57,7 +59,8 @@ pub use auth::{build_passthrough_headers, ensure_upstream_auth_header};
 pub use auth_config::apply_local_auth_config_header_overrides;
 pub use cache::{provider_transport_snapshot_looks_refreshed, ProviderTransportSnapshotCacheKey};
 pub use codex_fingerprint::{
-    apply_codex_oauth_fingerprint_convergence, codex_fingerprint_convergence_enabled,
+    apply_codex_fingerprint_convergence, apply_codex_fingerprint_convergence_with_context,
+    codex_fingerprint_convergence_enabled, CodexFingerprintConvergenceContext,
     CODEX_FINGERPRINT_CONFIG_NAMESPACE, CODEX_FINGERPRINT_ENABLED_CONFIG_KEY,
 };
 pub use conversion::{
@@ -118,6 +121,13 @@ pub use openai_image::{
     build_openai_image_headers, build_openai_image_upstream_url,
     openai_image_transport_unsupported_reason, resolve_openai_image_auth,
     ProviderOpenAiImageHeadersInput,
+};
+pub use outbound_request_policy::{
+    apply_provider_outbound_request_policies, ProviderOutboundRequestContext,
+    ProviderOutboundRequestIdentityScope, ProviderOutboundRequestMutationScope,
+    ProviderOutboundRequestPolicy, ProviderOutboundRequestPolicyOutcome,
+    ProviderOutboundRequestPolicyReason, ProviderOutboundRequestPolicyResult,
+    PROVIDER_OUTBOUND_CONTEXT_MAX_VALUE_BYTES,
 };
 pub use policy::{
     local_gemini_transport_unsupported_reason,
@@ -185,4 +195,11 @@ pub use windsurf::{
     build_windsurf_cascade_upstream_url, is_windsurf_provider_transport,
     local_windsurf_request_transport_unsupported_reason_with_network, GET_CHAT_MESSAGE_PATH,
     WINDSURF_ENVELOPE_NAME,
+};
+pub use xai::{
+    extract_xai_user_id_from_auth_config, extract_xai_user_id_from_value,
+    insert_cli_identity_headers, insert_cli_identity_headers_if_needed, is_xai_provider_transport,
+    resolved_xai_request_base_url, resolved_xai_upstream_base_url,
+    should_attach_cli_identity_headers, xai_auth_uses_api, xai_uses_official_api, XAI_API_BASE_URL,
+    XAI_CHAT_PROXY_BASE_URL, XAI_PROVIDER_TYPE,
 };

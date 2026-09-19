@@ -77,7 +77,7 @@ fn simulated_cache_stream_rewriter_injects_responses_cached_tokens_across_chunks
 #[test]
 fn simulated_cache_stream_rewriter_injects_chat_cached_tokens_across_chunks() {
     let report_context = json!({
-        "provider_api_format": "openai:responses",
+        "provider_api_format": "openai:chat",
         "client_api_format": "openai:chat",
         "simulated_cache_enabled": true,
         "cache_read_input_tokens": 63000,

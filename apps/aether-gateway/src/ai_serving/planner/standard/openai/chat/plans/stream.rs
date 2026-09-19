@@ -1,3 +1,4 @@
+use aether_routing_core::{RoutingExecutionPolicy, RoutingSchedulingMode};
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use tracing::warn;
@@ -119,6 +120,13 @@ pub(crate) async fn build_local_openai_chat_stream_attempt_source<'a>(
 
 #[async_trait]
 impl LocalExecutionAttemptSource<AiStreamAttempt> for LocalOpenAiChatStreamAttemptSource<'_> {
+    fn routing_execution_policy(&self) -> Option<RoutingExecutionPolicy> {
+        self.input
+            .routing_policy
+            .as_ref()
+            .map(|policy| policy.execution_policy.clone())
+    }
+
     async fn next_execution_attempt(&mut self) -> Result<Option<AiStreamAttempt>, GatewayError> {
         let select_started_at = std::time::Instant::now();
         let selected = self.next_execution_attempt_with_target_select().await?;
@@ -199,7 +207,12 @@ impl LocalOpenAiChatStreamAttemptSource<'_> {
     async fn next_raw_attempt_with_target_select(
         &mut self,
     ) -> Result<Option<LocalOpenAiChatCandidateAttempt>, GatewayError> {
-        let select_window = openai_chat_stream_target_select_window();
+        let select_window = openai_chat_stream_target_select_window_for_mode(
+            self.input
+                .routing_policy
+                .as_ref()
+                .map(|policy| policy.scheduling_mode),
+        );
         if select_window <= 1 {
             return self.next_raw_attempt_linear().await;
         }
@@ -355,6 +368,15 @@ fn openai_chat_stream_target_select_window() -> usize {
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_OPENAI_CHAT_STREAM_TARGET_SELECT_WINDOW)
         .clamp(1, MAX_OPENAI_CHAT_STREAM_TARGET_SELECT_WINDOW)
+}
+
+fn openai_chat_stream_target_select_window_for_mode(
+    scheduling_mode: Option<RoutingSchedulingMode>,
+) -> usize {
+    if scheduling_mode == Some(RoutingSchedulingMode::FixedOrder) {
+        return 1;
+    }
+    openai_chat_stream_target_select_window()
 }
 
 #[derive(Clone, Copy)]
@@ -565,5 +587,15 @@ mod tests {
         ];
 
         assert_eq!(select_target_index(19, &choices), 1);
+    }
+
+    #[test]
+    fn fixed_order_disables_stream_target_selection() {
+        assert_eq!(
+            openai_chat_stream_target_select_window_for_mode(Some(
+                RoutingSchedulingMode::FixedOrder,
+            )),
+            1
+        );
     }
 }

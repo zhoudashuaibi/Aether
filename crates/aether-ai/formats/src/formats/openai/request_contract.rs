@@ -147,6 +147,16 @@ fn finalize_openai_provider_request_with_codex_model_capabilities_and_reasoning_
         finalization.provider_api_format,
         reasoning_replay_policy,
     );
+    if crate::is_openai_responses_family_format(finalization.provider_api_format) {
+        super::responses::normalize_openai_responses_call_ids(body);
+    }
+    if finalization
+        .provider_api_format
+        .trim()
+        .eq_ignore_ascii_case("openai:responses")
+    {
+        super::responses::normalize_openai_responses_message_item_ids(body);
+    }
     crate::enforce_request_body_stream_field(
         body,
         finalization.provider_api_format,
@@ -227,6 +237,79 @@ mod tests {
         validate_openai_provider_request_contract, OpenAiProviderRequestFinalization,
     };
     use crate::CodexResponsesModelCapabilities;
+
+    #[test]
+    fn finalization_bounds_responses_call_ids_and_preserves_pairing() {
+        let long_id = format!("call_{}", "a".repeat(78));
+        let original = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {"type": "function_call", "call_id": long_id, "name": "lookup", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": long_id, "output": "result"}
+            ]
+        });
+
+        for (source_api_format, provider_type, provider_api_format, websocket_continuation) in [
+            ("openai:responses", "codex", "openai:responses", false),
+            (
+                "openai:responses",
+                "codex",
+                "openai:responses:compact",
+                false,
+            ),
+            ("openai:responses", "openai", "openai:responses", false),
+            (
+                "openai:responses",
+                "openai",
+                "openai:responses:compact",
+                false,
+            ),
+            ("openai:responses", "codex", "openai:responses", true),
+            ("openai:chat", "codex", "openai:responses", false),
+            ("openai:chat", "openai", "openai:responses", false),
+            ("claude:messages", "codex", "openai:responses", false),
+            ("claude:messages", "openai", "openai:responses", false),
+            (
+                "gemini:generate_content",
+                "codex",
+                "openai:responses",
+                false,
+            ),
+            (
+                "gemini:generate_content",
+                "openai",
+                "openai:responses",
+                false,
+            ),
+        ] {
+            let mut body = original.clone();
+            let finalization = OpenAiProviderRequestFinalization {
+                source_api_format,
+                provider_api_format,
+                provider_type,
+                provider_model: "gpt-5.4",
+                source_model: "gpt-5.4",
+                body_rules: None,
+                upstream_is_stream: false,
+                require_body_stream_field: true,
+            };
+            if websocket_continuation {
+                super::finalize_openai_provider_request_with_codex_model_capabilities_and_reasoning_replay_policy_for_websocket_continuation(
+                    &mut body,
+                    finalization,
+                    None,
+                    crate::formats::openai::responses::OpenAiResponsesReasoningReplayPolicy::OpenAiItemIds,
+                )
+            } else {
+                finalize_openai_provider_request(&mut body, finalization)
+            }
+            .expect("request should finalize");
+
+            let call_id = body["input"][0]["call_id"].as_str().expect("call ID");
+            assert!(call_id.len() <= 64, "call ID has {} bytes", call_id.len());
+            assert_eq!(body["input"][1]["call_id"], call_id);
+        }
+    }
 
     #[test]
     fn validates_reasoning_and_prompt_cache_against_the_final_provider_model() {
@@ -374,10 +457,21 @@ mod tests {
 
     #[test]
     fn finalization_strips_non_replayable_responses_reasoning_history() {
+        let gemini_carrier =
+            crate::formats::openai::responses::encode_gemini_tool_signature_carrier(
+                "opaque-gemini-thought-signature",
+            )
+            .expect("Gemini signature carrier");
         let mut body = json!({
             "model": "gpt-5.4",
             "input": [
                 {"type": "reasoning", "id": "rs_provider_123", "summary": []},
+                {
+                    "type": "reasoning",
+                    "id": "rs_aether_55070860f6d45c6b8f6fa11efd9dff8a",
+                    "summary": [],
+                    "encrypted_content": gemini_carrier
+                },
                 {
                     "type": "reasoning",
                     "id": "item_72d3bd8d367d01977ace23f1",
@@ -406,6 +500,39 @@ mod tests {
         assert_eq!(input.len(), 2);
         assert_eq!(input[0]["id"], "rs_provider_123");
         assert_eq!(input[1]["type"], "message");
+    }
+
+    #[test]
+    fn finalization_repairs_legacy_responses_message_ids_for_same_format_upstream() {
+        let mut body = json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "type": "message",
+                "id": "1c938e58-32a8-4d28-9c34-538d78076895_msg",
+                "role": "assistant",
+                "content": [{"type": "input_text", "text": "previous answer"}]
+            }]
+        });
+
+        finalize_openai_provider_request(
+            &mut body,
+            OpenAiProviderRequestFinalization {
+                source_api_format: "openai:responses",
+                provider_api_format: "openai:responses",
+                provider_type: "codex",
+                provider_model: "gpt-5.4",
+                source_model: "gpt-5.4",
+                body_rules: None,
+                upstream_is_stream: false,
+                require_body_stream_field: false,
+            },
+        )
+        .expect("legacy message IDs should be repaired before provider validation");
+
+        let repaired_id = body["input"][0]["id"]
+            .as_str()
+            .expect("message ID should be a string");
+        assert!(repaired_id.starts_with("msg_"));
     }
 
     #[test]

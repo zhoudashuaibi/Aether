@@ -90,11 +90,15 @@ pub(crate) fn provider_key_can_refresh_oauth(
 ) -> bool {
     auth_semantics.can_refresh_oauth()
         && (provider_key_auth_config_is_agent_identity(provider_type, auth_config)
-            || auth_config
-                .and_then(|config| config.get("refresh_token"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()))
+            || auth_config.is_some_and(|config| {
+                ["refresh_token", "refreshToken"].iter().any(|field| {
+                    config
+                        .get(*field)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .is_some_and(|value| !value.is_empty())
+                })
+            }))
 }
 
 pub(crate) fn provider_key_can_export_oauth(
@@ -168,6 +172,7 @@ fn provider_uses_bearer_oauth_runtime(provider_type: &str) -> bool {
             | "antigravity"
             | "kiro"
             | "windsurf"
+            | "xai"
     )
 }
 
@@ -403,6 +408,22 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_xai_oauth_as_bearer_runtime() {
+        let semantics = provider_key_auth_semantics(&sample_key("oauth"), "xai");
+
+        assert!(semantics.oauth_managed());
+        assert!(semantics.can_refresh_oauth());
+        assert_eq!(
+            semantics.credential_kind(),
+            ProviderKeyCredentialKind::OAuthSession
+        );
+        assert_eq!(
+            semantics.runtime_auth_kind(),
+            ProviderKeyRuntimeAuthKind::Bearer
+        );
+    }
+
+    #[test]
     fn refresh_capability_requires_stored_refresh_token() {
         let semantics = provider_key_auth_semantics(&sample_key("oauth"), "codex");
 
@@ -424,6 +445,11 @@ mod tests {
             semantics,
             "codex",
             json!({ "refresh_token": "refresh-token" }).as_object()
+        ));
+        assert!(provider_key_can_refresh_oauth(
+            provider_key_auth_semantics(&sample_key("oauth"), "antigravity"),
+            "antigravity",
+            json!({ "refreshToken": "legacy-refresh-token" }).as_object()
         ));
         assert!(provider_key_can_refresh_oauth(
             semantics,

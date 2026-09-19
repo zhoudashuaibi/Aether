@@ -74,7 +74,8 @@ fn validate_batch_access_token_import(
 ) -> Result<(), String> {
     if !provider_type_supports_access_token_import(provider_type) {
         return Err(
-            "Access Token 导入仅支持 Claude Code / Codex / ChatGPT Web / Grok Provider".to_string(),
+            "Access Token 导入仅支持 Claude Code / Codex / ChatGPT Web / Grok / xAI Provider"
+                .to_string(),
         );
     }
     if provider_type.eq_ignore_ascii_case("claude_code") {
@@ -394,7 +395,7 @@ async fn resolve_admin_provider_oauth_batch_import_tokens(
                         });
                     }
                 }
-                return Err(format!("Token 验证失败: {detail}"));
+                return Err("Token 验证失败".to_string());
             }
         };
 

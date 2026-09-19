@@ -185,6 +185,10 @@ SELECT
   usage_http_audits.provider_request_body_ref AS http_provider_request_body_ref,
   usage_http_audits.response_body_ref AS http_response_body_ref,
   usage_http_audits.client_response_body_ref AS http_client_response_body_ref,
+  usage_http_audits.request_body_state AS http_request_body_state,
+  usage_http_audits.provider_request_body_state AS http_provider_request_body_state,
+  usage_http_audits.response_body_state AS http_response_body_state,
+  usage_http_audits.client_response_body_state AS http_client_response_body_state,
   usage_routing_snapshots.candidate_id AS routing_candidate_id,
   usage_routing_snapshots.candidate_index AS routing_candidate_index,
   usage_routing_snapshots.key_name AS routing_key_name,
@@ -221,11 +225,13 @@ SELECT
   usage_settlement_snapshots.billing_rule_id AS settlement_billing_rule_id,
   usage_settlement_snapshots.billing_rule_version AS settlement_billing_rule_version,
   CAST(EXTRACT(EPOCH FROM "usage".created_at) AS BIGINT) AS created_at_unix_ms,
-  GREATEST(
-    COALESCE(NULLIF("usage".updated_at_unix_secs, 0), 0),
-    COALESCE(CAST(EXTRACT(EPOCH FROM usage_settlement_snapshots.finalized_at) AS BIGINT), 0),
-    COALESCE(CAST(EXTRACT(EPOCH FROM "usage".finalized_at) AS BIGINT), 0),
-    CAST(EXTRACT(EPOCH FROM "usage".created_at) AS BIGINT)
+  COALESCE(
+    NULLIF("usage".updated_at_unix_secs, 0),
+    GREATEST(
+      COALESCE(CAST(EXTRACT(EPOCH FROM usage_settlement_snapshots.finalized_at) AS BIGINT), 0),
+      COALESCE(CAST(EXTRACT(EPOCH FROM "usage".finalized_at) AS BIGINT), 0),
+      CAST(EXTRACT(EPOCH FROM "usage".created_at) AS BIGINT)
+    )
   ) AS updated_at_unix_secs,
   CAST(
     EXTRACT(

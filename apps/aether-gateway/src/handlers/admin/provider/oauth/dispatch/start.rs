@@ -8,6 +8,7 @@ use crate::handlers::admin::provider::shared::paths::{
     admin_provider_oauth_start_key_id, admin_provider_oauth_start_provider_id,
 };
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
+use crate::handlers::admin::shared::mark_sensitive_admin_response_no_store;
 use crate::provider_key_auth::provider_key_is_oauth_managed;
 use crate::GatewayError;
 use axum::{
@@ -69,10 +70,25 @@ pub(super) async fn handle_admin_provider_oauth_start_key(
             "Windsurf 请使用浏览器登录或导入凭据。",
         ));
     }
+    if provider_type == "xai" {
+        return Ok(build_internal_control_error_response(
+            http::StatusCode::BAD_REQUEST,
+            "xAI 请使用设备授权或导入凭据。",
+        ));
+    }
     let Some(template) = admin_provider_oauth_template(&provider_type) else {
         return Ok(build_internal_control_error_response(
             http::StatusCode::BAD_REQUEST,
             "该 Provider 不支持 OAuth 授权",
+        ));
+    };
+    let Some(principal) = request_context
+        .decision()
+        .and_then(|decision| decision.admin_principal.as_ref())
+    else {
+        return Ok(build_internal_control_error_response(
+            http::StatusCode::UNAUTHORIZED,
+            "管理员身份不可用",
         ));
     };
 
@@ -87,6 +103,9 @@ pub(super) async fn handle_admin_provider_oauth_start_key(
             &provider_type,
             pkce_verifier.as_deref(),
             key.encrypted_auth_config.as_deref(),
+            &principal.user_id,
+            principal.session_id.as_deref(),
+            principal.management_token_id.as_deref(),
         )
         .await
     {
@@ -99,12 +118,19 @@ pub(super) async fn handle_admin_provider_oauth_start_key(
         }
     };
 
-    Ok(Json(build_provider_oauth_start_response(
-        template,
-        &nonce,
-        code_challenge.as_deref(),
+    let payload =
+        match build_provider_oauth_start_response(template, &nonce, code_challenge.as_deref()) {
+            Ok(payload) => payload,
+            Err(_) => {
+                return Ok(build_internal_control_error_response(
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    "OAuth 客户端配置不可用",
+                ));
+            }
+        };
+    Ok(mark_sensitive_admin_response_no_store(
+        Json(payload).into_response(),
     ))
-    .into_response())
 }
 
 pub(super) async fn handle_admin_provider_oauth_start_provider(
@@ -147,10 +173,25 @@ pub(super) async fn handle_admin_provider_oauth_start_provider(
             "Windsurf 请使用浏览器登录或导入凭据。",
         ));
     }
+    if provider_type == "xai" {
+        return Ok(build_internal_control_error_response(
+            http::StatusCode::BAD_REQUEST,
+            "xAI 请使用设备授权或导入凭据。",
+        ));
+    }
     let Some(template) = admin_provider_oauth_template(&provider_type) else {
         return Ok(build_internal_control_error_response(
             http::StatusCode::BAD_REQUEST,
             "该 Provider 不支持 OAuth 授权",
+        ));
+    };
+    let Some(principal) = request_context
+        .decision()
+        .and_then(|decision| decision.admin_principal.as_ref())
+    else {
+        return Ok(build_internal_control_error_response(
+            http::StatusCode::UNAUTHORIZED,
+            "管理员身份不可用",
         ));
     };
 
@@ -165,6 +206,9 @@ pub(super) async fn handle_admin_provider_oauth_start_provider(
             &provider_type,
             pkce_verifier.as_deref(),
             None,
+            &principal.user_id,
+            principal.session_id.as_deref(),
+            principal.management_token_id.as_deref(),
         )
         .await
     {
@@ -177,10 +221,17 @@ pub(super) async fn handle_admin_provider_oauth_start_provider(
         }
     };
 
-    Ok(Json(build_provider_oauth_start_response(
-        template,
-        &nonce,
-        code_challenge.as_deref(),
+    let payload =
+        match build_provider_oauth_start_response(template, &nonce, code_challenge.as_deref()) {
+            Ok(payload) => payload,
+            Err(_) => {
+                return Ok(build_internal_control_error_response(
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    "OAuth 客户端配置不可用",
+                ));
+            }
+        };
+    Ok(mark_sensitive_admin_response_no_store(
+        Json(payload).into_response(),
     ))
-    .into_response())
 }

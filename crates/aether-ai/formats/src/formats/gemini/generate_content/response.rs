@@ -2,14 +2,175 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     formats::context::FormatContext,
+    formats::shared::citations::{
+        canonical_citation, canonical_citations_to_claude_citations,
+        canonical_citations_to_openai_annotations,
+    },
     protocol::canonical::{
         canonical_extension_object_mut, canonical_usage_total_input_tokens,
         canonical_usage_total_tokens_for_inclusive_input, gemini_extensions,
         gemini_part_to_canonical_block, gemini_stop_reason_to_canonical, gemini_usage_to_canonical,
         CanonicalContentBlock, CanonicalResponse, CanonicalResponseOutput, CanonicalRole,
-        CanonicalStopReason, CanonicalUsage,
+        CanonicalStopReason, CanonicalUsage, CLAUDE_EXTENSION_NAMESPACE,
+        OPENAI_RESPONSES_EXTENSION_NAMESPACE,
     },
 };
+
+/// Project Gemini grounding metadata onto the answer text as structured
+/// citations.
+///
+/// Native `googleSearch` grounding runs inside Google, so there is no
+/// client-visible tool call and the evidence only exists in
+/// `candidates[].groundingMetadata`. Cross-format targets used to drop that
+/// wholesale, leaving callers with prose that names its sources but nothing a
+/// client can render or verify. Every grounded span is therefore emitted twice,
+/// each time in the target family's own standard shape: OpenAI `url_citation`
+/// annotations and Claude `web_search_result_location` citations. Both ride
+/// extension namespaces the respective emitters already merge onto the text
+/// block, so no target has to learn anything Gemini-specific.
+fn attach_gemini_grounding_citations(
+    candidate: &Map<String, Value>,
+    content: &mut [CanonicalContentBlock],
+) {
+    let Some(grounding) = gemini_candidate_grounding(candidate) else {
+        return;
+    };
+    let Some(block) = content.iter_mut().find(|block| {
+        matches!(block, CanonicalContentBlock::Text { text, .. } if !text.trim().is_empty())
+    }) else {
+        return;
+    };
+    let CanonicalContentBlock::Text { text, extensions } = block else {
+        return;
+    };
+
+    let citations = gemini_grounding_citations(grounding, text);
+    if citations.is_empty() {
+        return;
+    }
+    let annotations = canonical_citations_to_openai_annotations(&citations);
+    let claude_citations = canonical_citations_to_claude_citations(&citations);
+    canonical_extension_object_mut(extensions, OPENAI_RESPONSES_EXTENSION_NAMESPACE)
+        .entry("annotations".to_string())
+        .or_insert_with(|| Value::Array(annotations));
+    canonical_extension_object_mut(extensions, CLAUDE_EXTENSION_NAMESPACE)
+        .entry("citations".to_string())
+        .or_insert_with(|| Value::Array(claude_citations));
+}
+
+pub(crate) fn gemini_candidate_grounding(candidate: &Map<String, Value>) -> Option<&Value> {
+    candidate
+        .get("groundingMetadata")
+        .or_else(|| candidate.get("grounding_metadata"))
+}
+
+/// Normalise `groundingMetadata` into neutral citations against `text`.
+///
+/// Gemini reports segment bounds as UTF-8 byte offsets while every target
+/// counts characters, so the bounds are converted rather than copied.
+pub(crate) fn gemini_grounding_citations(grounding: &Value, text: &str) -> Vec<Value> {
+    let chunks = grounding
+        .get("groundingChunks")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if chunks.is_empty() {
+        return Vec::new();
+    }
+
+    let supports = grounding
+        .get("groundingSupports")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+
+    let mut citations = Vec::new();
+    for support in supports {
+        let segment = support.get("segment");
+        let start = segment
+            .and_then(|segment| segment.get("startIndex"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let end = segment
+            .and_then(|segment| segment.get("endIndex"))
+            .and_then(Value::as_u64);
+        let start_byte = gemini_clamped_byte_offset(text, start);
+        let end_byte = end
+            .map(|end| gemini_clamped_byte_offset(text, end))
+            .filter(|end| *end >= start_byte);
+        let cited_text = segment
+            .and_then(|segment| segment.get("text"))
+            .and_then(Value::as_str)
+            .or_else(|| end_byte.map(|end| &text[start_byte..end]))
+            .map(str::trim)
+            .filter(|cited_text| !cited_text.is_empty());
+        let indices = support
+            .get("groundingChunkIndices")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for index in indices {
+            let Some(chunk) = index
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| chunks.get(index))
+            else {
+                continue;
+            };
+            let Some((uri, title)) = gemini_grounding_chunk_source(chunk) else {
+                continue;
+            };
+            citations.push(canonical_citation(
+                uri,
+                title,
+                Some(text[..start_byte].chars().count()),
+                end_byte.map(|end| text[..end].chars().count()),
+                cited_text,
+            ));
+        }
+    }
+
+    // `groundingSupports` is optional; without it the chunks are still the
+    // evidence, just unanchored.
+    if citations.is_empty() {
+        for chunk in chunks {
+            let Some((uri, title)) = gemini_grounding_chunk_source(chunk) else {
+                continue;
+            };
+            citations.push(canonical_citation(uri, title, None, None, None));
+        }
+    }
+    citations
+}
+
+fn gemini_grounding_chunk_source(chunk: &Value) -> Option<(&str, Option<&str>)> {
+    let source = chunk.get("web").or_else(|| chunk.get("retrievedContext"))?;
+    let uri = source
+        .get("uri")
+        .or_else(|| source.get("url"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|uri| !uri.is_empty())?;
+    let title = source
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty());
+    Some((uri, title))
+}
+
+/// Gemini offsets are byte counts into the UTF-8 answer. A truncated or stale
+/// offset must not panic the conversion, so snap it into range and back onto a
+/// character boundary.
+fn gemini_clamped_byte_offset(text: &str, byte_offset: u64) -> usize {
+    let mut offset = usize::try_from(byte_offset)
+        .unwrap_or(text.len())
+        .min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
 
 pub fn from(body: &Value, _ctx: &FormatContext) -> Option<CanonicalResponse> {
     from_raw(body)
@@ -26,6 +187,7 @@ pub fn from_raw(body_json: &Value) -> Option<CanonicalResponse> {
     }
 
     let candidates = body.get("candidates")?.as_array()?;
+    let usage = gemini_usage_to_canonical(body.get("usageMetadata"));
     let mut outputs = Vec::new();
     for (fallback_index, candidate) in candidates.iter().enumerate() {
         let candidate_object = candidate.as_object()?;
@@ -36,11 +198,12 @@ pub fn from_raw(body_json: &Value) -> Option<CanonicalResponse> {
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        let content = parts
+        let mut content = parts
             .iter()
             .enumerate()
             .filter_map(|(index, part)| gemini_part_to_canonical_block(part, index))
             .collect::<Vec<_>>();
+        attach_gemini_grounding_citations(candidate_object, &mut content);
         let mut stop_reason = candidate_object
             .get("finishReason")
             .or_else(|| candidate_object.get("finish_reason"))
@@ -79,7 +242,10 @@ pub fn from_raw(body_json: &Value) -> Option<CanonicalResponse> {
             extensions,
         });
     }
-    outputs.retain(gemini_response_output_has_visible_content);
+    outputs.retain(|output| {
+        gemini_response_output_has_visible_content(output)
+            || gemini_response_output_is_reasoning_exhausted_terminal(output, usage.as_ref())
+    });
     if outputs.is_empty() {
         return None;
     }
@@ -106,7 +272,7 @@ pub fn from_raw(body_json: &Value) -> Option<CanonicalResponse> {
         outputs,
         content,
         stop_reason,
-        usage: gemini_usage_to_canonical(body.get("usageMetadata")),
+        usage,
         extensions: gemini_extensions(
             body,
             &[
@@ -127,14 +293,34 @@ pub fn from_raw(body_json: &Value) -> Option<CanonicalResponse> {
 
 fn gemini_response_output_has_visible_content(output: &CanonicalResponseOutput) -> bool {
     output.content.iter().any(|block| match block {
-        CanonicalContentBlock::Text { text, .. } => !text.trim().is_empty(),
+        CanonicalContentBlock::Text { text, .. } | CanonicalContentBlock::Thinking { text, .. } => {
+            !text.trim().is_empty()
+        }
         CanonicalContentBlock::ToolUse { .. }
         | CanonicalContentBlock::ToolResult { .. }
         | CanonicalContentBlock::Image { .. }
         | CanonicalContentBlock::File { .. }
         | CanonicalContentBlock::Audio { .. } => true,
-        CanonicalContentBlock::Thinking { .. } | CanonicalContentBlock::Unknown { .. } => false,
+        CanonicalContentBlock::Unknown { .. } => false,
     })
+}
+
+fn gemini_response_output_is_reasoning_exhausted_terminal(
+    output: &CanonicalResponseOutput,
+    usage: Option<&CanonicalUsage>,
+) -> bool {
+    matches!(output.stop_reason, Some(CanonicalStopReason::MaxTokens))
+        && usage.is_some_and(|usage| usage.reasoning_tokens > 0)
+        && output.content.iter().any(|block| {
+            matches!(
+                block,
+                CanonicalContentBlock::Thinking {
+                    text,
+                    signature: Some(signature),
+                    ..
+                } if text.trim().is_empty() && !signature.trim().is_empty()
+            )
+        })
 }
 
 pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value) -> Option<Value> {
@@ -409,6 +595,49 @@ mod tests {
     use super::*;
     use crate::CanonicalContentBlock;
 
+    /// Gemini omits `groundingSupports` when it cannot anchor the answer to a
+    /// span. The sources are still real, so they must survive unanchored
+    /// rather than be dropped for lacking offsets.
+    #[test]
+    fn grounding_without_supports_still_yields_unanchored_citations() {
+        let body = json!({
+            "responseId": "resp-unanchored",
+            "candidates": [{
+                "content": {"role": "model", "parts": [{"text": "Rust 1.95 is current."}]},
+                "finishReason": "STOP",
+                "groundingMetadata": {
+                    "groundingChunks": [
+                        {"web": {"uri": "https://blog.rust-lang.org/", "title": "Rust Blog"}},
+                        {"web": {"title": "no uri here"}}
+                    ]
+                }
+            }]
+        });
+
+        let canonical = from_raw(&body).expect("canonical");
+        let CanonicalContentBlock::Text { extensions, .. } = &canonical.outputs[0].content[0]
+        else {
+            panic!("expected a text block");
+        };
+
+        assert_eq!(
+            extensions["claude"]["citations"],
+            json!([{
+                "type": "web_search_result_location",
+                "url": "https://blog.rust-lang.org/",
+                "title": "Rust Blog",
+            }])
+        );
+        assert_eq!(
+            extensions["openai_responses"]["annotations"],
+            json!([{
+                "type": "url_citation",
+                "url": "https://blog.rust-lang.org/",
+                "title": "Rust Blog",
+            }])
+        );
+    }
+
     #[test]
     fn gemini_response_without_visible_parts_is_not_success() {
         let body = json!({
@@ -430,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn gemini_response_with_only_thought_parts_is_not_success() {
+    fn gemini_response_with_only_thought_parts_is_success() {
         let body = json!({
             "candidates": [{
                 "content": {
@@ -441,6 +670,92 @@ mod tests {
             }],
             "modelVersion": "gemini-3-flash-preview",
             "responseId": "resp-thought-only"
+        });
+
+        let canonical = from_raw(&body).expect("thought text is representable output");
+        assert!(matches!(
+            canonical.content.first(),
+            Some(CanonicalContentBlock::Thinking { text, .. }) if text == "hidden plan"
+        ));
+        assert!(matches!(
+            canonical.stop_reason,
+            Some(CanonicalStopReason::MaxTokens)
+        ));
+
+        let openai = crate::canonical_to_openai_chat_response(&canonical);
+        assert_eq!(
+            openai["choices"][0]["message"]["reasoning_content"],
+            "hidden plan"
+        );
+        assert_eq!(openai["choices"][0]["finish_reason"], "length");
+    }
+
+    #[test]
+    fn gemini_response_with_signature_only_reasoning_exhaustion_is_success() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "",
+                        "thoughtSignature": "opaque-thought-signature"
+                    }]
+                },
+                "finishReason": "MAX_TOKENS"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 22,
+                "thoughtsTokenCount": 29,
+                "totalTokenCount": 51
+            },
+            "modelVersion": "gemini-3.7-flash-tiered",
+            "responseId": "resp-signature-only"
+        });
+
+        let canonical = from_raw(&body).expect("reasoning exhaustion is a valid terminal");
+        assert!(matches!(
+            canonical.content.first(),
+            Some(CanonicalContentBlock::Thinking {
+                text,
+                signature: Some(signature),
+                ..
+            }) if text.is_empty() && signature == "opaque-thought-signature"
+        ));
+        assert!(matches!(
+            canonical.stop_reason,
+            Some(CanonicalStopReason::MaxTokens)
+        ));
+        assert_eq!(
+            canonical.usage.as_ref().map(|usage| usage.reasoning_tokens),
+            Some(29)
+        );
+
+        let openai = crate::canonical_to_openai_chat_response(&canonical);
+        assert_eq!(openai["choices"][0]["finish_reason"], "length");
+        assert_eq!(
+            openai["usage"]["completion_tokens_details"]["reasoning_tokens"],
+            29
+        );
+    }
+
+    #[test]
+    fn gemini_signature_only_terminal_without_reasoning_usage_is_not_success() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "",
+                        "thoughtSignature": "opaque-thought-signature"
+                    }]
+                },
+                "finishReason": "MAX_TOKENS"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 22,
+                "thoughtsTokenCount": 0,
+                "totalTokenCount": 22
+            }
         });
 
         assert!(from_raw(&body).is_none());

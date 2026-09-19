@@ -103,6 +103,11 @@ INNER JOIN LATERAL (
         AND LOWER($3) IN ('openai:chat', 'openai:responses', 'claude:messages', 'openai:image')
       )
       OR (
+        LOWER(BTRIM(p.provider_type)) = 'xai'
+        AND LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'bearer', 'api_key')
+        AND LOWER($3) IN ('openai:responses', 'openai:responses:compact', 'openai:image', 'openai:video')
+      )
+      OR (
         LOWER(BTRIM(p.provider_type)) IN ('gemini_cli', 'antigravity')
         AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
         AND LOWER($3) = 'gemini:generate_content'
@@ -127,7 +132,8 @@ INNER JOIN LATERAL (
           'vertex_ai',
           'antigravity',
           'kiro',
-          'windsurf'
+          'windsurf',
+          'xai'
         )
         AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
       )
@@ -188,6 +194,11 @@ WHERE p.is_active = TRUE
       AND LOWER($3) IN ('openai:chat', 'openai:responses', 'claude:messages', 'openai:image')
     )
     OR (
+      LOWER(BTRIM(p.provider_type)) = 'xai'
+      AND LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'bearer', 'api_key')
+      AND LOWER($3) IN ('openai:responses', 'openai:responses:compact', 'openai:image', 'openai:video')
+    )
+    OR (
       LOWER(BTRIM(p.provider_type)) IN ('gemini_cli', 'antigravity')
       AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
       AND LOWER($3) = 'gemini:generate_content'
@@ -212,7 +223,8 @@ WHERE p.is_active = TRUE
         'vertex_ai',
         'antigravity',
         'kiro',
-        'windsurf'
+        'windsurf',
+        'xai'
       )
       AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
     )
@@ -366,6 +378,11 @@ INNER JOIN LATERAL (
         AND LOWER($4) IN ('openai:chat', 'openai:responses', 'claude:messages', 'openai:image')
       )
       OR (
+        LOWER(BTRIM(p.provider_type)) = 'xai'
+        AND LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'bearer', 'api_key')
+        AND LOWER($4) IN ('openai:responses', 'openai:responses:compact', 'openai:image', 'openai:video')
+      )
+      OR (
         LOWER(BTRIM(p.provider_type)) IN ('gemini_cli', 'antigravity')
         AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
         AND LOWER($4) = 'gemini:generate_content'
@@ -390,7 +407,8 @@ INNER JOIN LATERAL (
           'vertex_ai',
           'antigravity',
           'kiro',
-          'windsurf'
+          'windsurf',
+          'xai'
         )
         AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
       )
@@ -452,6 +470,11 @@ WHERE p.is_active = TRUE
       AND LOWER($4) IN ('openai:chat', 'openai:responses', 'claude:messages', 'openai:image')
     )
     OR (
+      LOWER(BTRIM(p.provider_type)) = 'xai'
+      AND LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'bearer', 'api_key')
+      AND LOWER($4) IN ('openai:responses', 'openai:responses:compact', 'openai:image', 'openai:video')
+    )
+    OR (
       LOWER(BTRIM(p.provider_type)) IN ('gemini_cli', 'antigravity')
       AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
       AND LOWER($4) = 'gemini:generate_content'
@@ -476,7 +499,8 @@ WHERE p.is_active = TRUE
         'vertex_ai',
         'antigravity',
         'kiro',
-        'windsurf'
+        'windsurf',
+        'xai'
       )
       AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
     )
@@ -632,11 +656,16 @@ WHERE p.is_active = TRUE
         )
       )
     )
-    OR (
-      LOWER(BTRIM(p.provider_type)) = 'grok'
-      AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
-      AND LOWER($6) IN ('openai:chat', 'openai:responses', 'claude:messages', 'openai:image')
-    )
+      OR (
+        LOWER(BTRIM(p.provider_type)) = 'grok'
+        AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
+        AND LOWER($6) IN ('openai:chat', 'openai:responses', 'claude:messages', 'openai:image')
+      )
+      OR (
+        LOWER(BTRIM(p.provider_type)) = 'xai'
+        AND LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'bearer', 'api_key')
+        AND LOWER($6) IN ('openai:responses', 'openai:responses:compact', 'openai:image', 'openai:video')
+      )
     OR (
       LOWER(BTRIM(p.provider_type)) IN ('gemini_cli', 'antigravity')
       AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
@@ -662,7 +691,8 @@ WHERE p.is_active = TRUE
         'vertex_ai',
         'antigravity',
         'kiro',
-        'windsurf'
+        'windsurf',
+        'xai'
       )
       AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
     )
@@ -1255,11 +1285,11 @@ fn map_candidate_selection_row(
         key_name: row.try_get("key_name").map_postgres_err()?,
         key_auth_type: row.try_get("key_auth_type").map_postgres_err()?,
         key_is_active: row.try_get("key_is_active").map_postgres_err()?,
-        key_api_formats: parse_string_list(
+        key_api_formats: parse_key_policy_string_list(
             row.try_get("key_api_formats").map_postgres_err()?,
             "provider_api_keys.api_formats",
         )?,
-        key_allowed_models: parse_string_list(
+        key_allowed_models: parse_key_policy_string_list(
             row.try_get("key_allowed_models").map_postgres_err()?,
             "provider_api_keys.allowed_models",
         )?,
@@ -1299,6 +1329,79 @@ fn parse_string_list(
         return Ok(None);
     };
     parse_string_list_value(&value, field_name)
+}
+
+fn parse_key_policy_string_list(
+    value: Option<serde_json::Value>,
+    field_name: &str,
+) -> Result<Option<Vec<String>>, DataLayerError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    parse_key_policy_string_list_value(&value, field_name)
+}
+
+fn parse_key_policy_string_list_value(
+    value: &serde_json::Value,
+    field_name: &str,
+) -> Result<Option<Vec<String>>, DataLayerError> {
+    match value {
+        serde_json::Value::Null => Err(DataLayerError::UnexpectedValue(format!(
+            "{field_name} contains JSON null; use SQL NULL for an unset policy"
+        ))),
+        serde_json::Value::Array(array) => {
+            parse_key_policy_string_list_array(array, field_name).map(Some)
+        }
+        serde_json::Value::String(raw) => parse_embedded_key_policy_string_list(raw, field_name),
+        _ => Err(DataLayerError::UnexpectedValue(format!(
+            "{field_name} is not a JSON array"
+        ))),
+    }
+}
+
+fn parse_embedded_key_policy_string_list(
+    raw: &str,
+    field_name: &str,
+) -> Result<Option<Vec<String>>, DataLayerError> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err(DataLayerError::UnexpectedValue(format!(
+            "{field_name} contains an empty string"
+        )));
+    }
+    if raw.eq_ignore_ascii_case("null") {
+        return Err(DataLayerError::UnexpectedValue(format!(
+            "{field_name} contains stringified JSON null; use SQL NULL for an unset policy"
+        )));
+    }
+
+    if let Ok(decoded) = serde_json::from_str::<serde_json::Value>(raw) {
+        return parse_key_policy_string_list_value(&decoded, field_name);
+    }
+
+    Ok(Some(vec![raw.to_string()]))
+}
+
+fn parse_key_policy_string_list_array(
+    array: &[serde_json::Value],
+    field_name: &str,
+) -> Result<Vec<String>, DataLayerError> {
+    let mut items = Vec::with_capacity(array.len());
+    for item in array {
+        let Some(item) = item.as_str() else {
+            return Err(DataLayerError::UnexpectedValue(format!(
+                "{field_name} contains a non-string item"
+            )));
+        };
+        let item = item.trim();
+        if item.is_empty() {
+            return Err(DataLayerError::UnexpectedValue(format!(
+                "{field_name} contains an empty item"
+            )));
+        }
+        items.push(item.to_string());
+    }
+    Ok(items)
 }
 
 fn parse_string_list_value(
@@ -1505,9 +1608,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        parse_provider_model_mappings, parse_string_list, pool_key_candidate_selection_sql,
-        requested_model_selection_page_sql, requested_model_selection_sql,
-        SqlxMinimalCandidateSelectionReadRepository,
+        parse_key_policy_string_list, parse_provider_model_mappings, parse_string_list,
+        pool_key_candidate_selection_sql, requested_model_selection_page_sql,
+        requested_model_selection_sql, SqlxMinimalCandidateSelectionReadRepository,
         LIST_FOR_EXACT_API_FORMAT_AND_GLOBAL_MODEL_SQL, LIST_FOR_EXACT_API_FORMAT_SQL,
         LIST_POOL_KEYS_FOR_GROUP_SQL, PROVIDER_MODEL_MAPPING_API_FORMAT_MATCH_MARKER,
         PROVIDER_MODEL_MAPPING_API_FORMAT_MATCH_SQL,
@@ -1645,6 +1748,24 @@ mod tests {
     }
 
     #[test]
+    fn candidate_selection_sql_allows_xai_oauth_responses_auth() {
+        let requested_model_sql = requested_model_selection_sql();
+        for sql in [
+            LIST_FOR_EXACT_API_FORMAT_SQL,
+            LIST_FOR_EXACT_API_FORMAT_AND_GLOBAL_MODEL_SQL,
+            LIST_POOL_KEYS_FOR_GROUP_SQL,
+            requested_model_sql.as_str(),
+        ] {
+            assert!(sql.contains("LOWER(BTRIM(p.provider_type)) = 'xai'"));
+            assert!(sql.contains("LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'bearer', 'api_key')"));
+            assert!(sql.contains(
+                "'openai:responses', 'openai:responses:compact', 'openai:image', 'openai:video'"
+            ));
+            assert!(sql.contains("'xai'"));
+        }
+    }
+
+    #[test]
     fn candidate_selection_sql_allows_windsurf_openai_chat_managed_keys() {
         let requested_model_sql = requested_model_selection_sql();
         for sql in [
@@ -1745,6 +1866,29 @@ mod tests {
             .expect("single string should parse");
 
         assert_eq!(parsed, Some(vec!["gpt-5.2".to_string()]));
+    }
+
+    #[test]
+    fn malformed_key_policy_never_degrades_to_unrestricted() {
+        for value in [
+            json!(null),
+            json!("null"),
+            json!(""),
+            json!(["openai:chat", null]),
+        ] {
+            assert!(
+                parse_key_policy_string_list(Some(value), "provider_api_keys.api_formats",)
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            parse_key_policy_string_list(
+                Some(json!(["openai:chat"])),
+                "provider_api_keys.api_formats",
+            )
+            .expect("valid key policy should parse"),
+            Some(vec!["openai:chat".to_string()])
+        );
     }
 
     #[test]

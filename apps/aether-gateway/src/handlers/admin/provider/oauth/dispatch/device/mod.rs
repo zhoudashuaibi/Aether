@@ -1,6 +1,8 @@
 mod authorize;
+mod lease;
 mod poll;
 mod session;
+mod xai;
 
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::GatewayError;

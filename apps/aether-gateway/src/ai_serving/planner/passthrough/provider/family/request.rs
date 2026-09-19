@@ -183,6 +183,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
     let reasoning_replay_policy = openai_responses_reasoning_replay_policy(
         prepared.transport.provider.provider_type.as_str(),
         prepared.transport.endpoint.base_url.as_str(),
+        prepared.mapped_model.as_str(),
     );
     let redaction = resolve_provider_chat_pii_redaction(
         state,
@@ -581,6 +582,11 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         provider_model,
         source_model,
         codex_model_capabilities.as_ref(),
+    );
+    crate::ai_serving::transport::xai::insert_cli_identity_headers_if_needed(
+        transport.as_ref(),
+        prepared.provider_api_format.as_str(),
+        &mut provider_request_headers,
     );
     request_identity_response_encoding_when_redacted(
         &mut provider_request_headers,

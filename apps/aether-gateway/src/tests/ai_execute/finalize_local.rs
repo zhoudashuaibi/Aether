@@ -1877,7 +1877,8 @@ async fn gateway_executes_openai_chat_antigravity_cross_format_sync_via_local_fi
                     Arc::clone(&request_candidate_repository),
                     Arc::clone(&usage_repository),
                     DEVELOPMENT_ENCRYPTION_KEY,
-                ),
+                )
+                .with_system_default_routing_group_for_tests(),
             );
     let gateway = build_router_with_state(gateway_state);
     let (gateway_url, gateway_handle) = start_server(gateway).await;
@@ -1949,7 +1950,7 @@ async fn gateway_executes_openai_chat_antigravity_cross_format_sync_via_local_fi
         "Bearer imported-antigravity-chat-token"
     );
     assert_eq!(seen_execution_runtime_request.x_client_name, "antigravity");
-    assert_eq!(seen_execution_runtime_request.x_client_version, "1.2.3");
+    assert_eq!(seen_execution_runtime_request.x_client_version, "4.3.0");
     assert_eq!(
         seen_execution_runtime_request.x_vscode_sessionid,
         "sess-antigravity-chat-local-123"
@@ -1971,7 +1972,7 @@ async fn gateway_executes_openai_chat_antigravity_cross_format_sync_via_local_fi
         seen_execution_runtime_request.user_agent,
         aether_provider_transport::antigravity::ANTIGRAVITY_REQUEST_USER_AGENT
     );
-    assert_eq!(seen_execution_runtime_request.request_type, "agent");
+    assert_eq!(seen_execution_runtime_request.request_type, "");
     assert_eq!(seen_execution_runtime_request.contents_len, 1);
     assert!(!seen_execution_runtime_request.request_has_model);
 

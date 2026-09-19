@@ -117,7 +117,7 @@
         <div
           class="space-y-4 transition-opacity duration-150"
           :class="mode === 'oauth' ? 'opacity-100' : 'opacity-0 pointer-events-none'"
-          :inert="mode !== 'oauth' ? '' : undefined"
+          :inert="mode !== 'oauth' ? true : undefined"
           :aria-hidden="mode !== 'oauth'"
         >
           <!-- Windsurf: 浏览器 session/poll 授权 -->
@@ -239,6 +239,129 @@
                     <div class="animate-spin rounded-full h-3 w-3 border-[1.5px] border-primary/30 border-t-primary" />
                     <span>{{ sessionRemainingText }}</span>
                   </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- xAI: 设备授权 -->
+          <template v-else-if="isXaiProvider">
+            <div class="space-y-3">
+              <div class="h-[265px]">
+                <div
+                  v-if="device.status === 'error' || device.status === 'expired'"
+                  class="rounded-xl border border-destructive/20 bg-destructive/5 p-5"
+                >
+                  <div class="flex flex-col items-center text-center space-y-3">
+                    <div class="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center">
+                      <AlertCircle class="w-5 h-5 text-destructive" />
+                    </div>
+                    <div class="space-y-1">
+                      <p class="text-sm font-medium text-destructive">
+                        {{ legacyT(device.status === 'expired' ? '授权已过期' : '授权失败') }}
+                      </p>
+                      <p class="text-xs text-muted-foreground">
+                        {{ legacyT(device.error || '请重试') }}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      @click="resetDevice"
+                    >
+                      {{ legacyT('重新开始') }}
+                    </Button>
+                  </div>
+                </div>
+
+                <div
+                  v-else-if="device.starting && !device.session_id"
+                  class="flex items-center justify-center py-12"
+                >
+                  <div class="text-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto mb-3" />
+                    <p class="text-xs text-muted-foreground">
+                      {{ legacyT('正在准备设备授权...') }}
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  v-else-if="device.session_id && device.status === 'pending'"
+                  class="rounded-xl border border-border bg-muted/20 p-5"
+                >
+                  <div class="flex flex-col items-center text-center space-y-4">
+                    <div class="relative">
+                      <div class="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+                      <div class="relative w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                        <ExternalLink class="w-5 h-5 text-primary" />
+                      </div>
+                    </div>
+
+                    <div class="space-y-1">
+                      <p class="text-sm font-medium">
+                        {{ legacyT('在浏览器中输入设备码完成授权') }}
+                      </p>
+                      <p class="text-xs text-muted-foreground">
+                        {{ legacyT('授权完成后此页面将自动更新') }}
+                      </p>
+                    </div>
+
+                    <div
+                      v-if="device.user_code"
+                      class="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2"
+                    >
+                      <span class="text-lg font-mono font-bold tracking-[0.2em]">{{ device.user_code }}</span>
+                      <button
+                        class="p-1 rounded hover:bg-muted transition-colors"
+                        :title="legacyT('复制设备码')"
+                        @click="copyToClipboard(device.user_code)"
+                      >
+                        <Copy class="w-3.5 h-3.5 text-muted-foreground" />
+                      </button>
+                    </div>
+
+                    <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <div class="animate-spin rounded-full h-3 w-3 border-[1.5px] border-primary/30 border-t-primary" />
+                      <span>{{ remainingText }}</span>
+                    </div>
+
+                    <div class="flex gap-2 w-full">
+                      <Button
+                        class="flex-1"
+                        size="sm"
+                        :disabled="!device.verification_uri_complete && !device.verification_uri"
+                        @click="openDeviceVerificationUrl"
+                      >
+                        <ExternalLink class="w-3.5 h-3.5 mr-1.5" />
+                        {{ legacyT('打开授权页面') }}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        :disabled="!device.verification_uri_complete && !device.verification_uri"
+                        @click="copyToClipboard(device.verification_uri_complete || device.verification_uri)"
+                      >
+                        <Copy class="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  v-else
+                  class="flex h-full flex-col items-center justify-center gap-3"
+                >
+                  <p class="text-xs text-muted-foreground text-center">
+                    {{ legacyT('使用 xAI 设备授权登录 Grok CLI，或改为导入 API Key / Refresh Token。') }}
+                  </p>
+                  <Button
+                    class="w-full"
+                    :disabled="device.starting"
+                    @click="startDeviceAuth"
+                  >
+                    {{ device.starting ? legacyT('正在准备授权...') : legacyT('开始授权') }}
+                  </Button>
                 </div>
               </div>
             </div>
@@ -612,7 +735,7 @@
           v-if="isClaudeCodeProvider"
           class="flex flex-col gap-3 justify-center transition-opacity duration-150"
           :class="mode === 'cookie' ? 'opacity-100' : 'opacity-0 pointer-events-none'"
-          :inert="mode !== 'cookie' ? '' : undefined"
+          :inert="mode !== 'cookie' ? true : undefined"
           :aria-hidden="mode !== 'cookie'"
         >
           <label
@@ -648,7 +771,7 @@
         <div
           class="flex flex-col gap-3 justify-center transition-opacity duration-150"
           :class="mode === 'import' ? 'opacity-100' : 'opacity-0 pointer-events-none'"
-          :inert="mode !== 'import' ? '' : undefined"
+          :inert="mode !== 'import' ? true : undefined"
           :aria-hidden="mode !== 'import'"
         >
           <div
@@ -780,7 +903,7 @@
           v-if="isCodexProvider"
           class="flex flex-col gap-3 justify-center transition-opacity duration-150"
           :class="mode === 'agent_identity' ? 'opacity-100' : 'opacity-0 pointer-events-none'"
-          :inert="mode !== 'agent_identity' ? '' : undefined"
+          :inert="mode !== 'agent_identity' ? true : undefined"
           :aria-hidden="mode !== 'agent_identity'"
         >
           <Textarea
@@ -868,6 +991,7 @@ import { useToast } from '@/composables/useToast'
 import { useClipboard } from '@/composables/useClipboard'
 import { useTotp } from '@/composables/useTotp'
 import { parseApiError } from '@/utils/errorParser'
+import { safeExternalHttpsUrl } from '@/utils/navigationSecurity'
 import { useI18n } from '@/i18n'
 import {
   startProviderLevelOAuth,
@@ -993,7 +1117,7 @@ let oauthInitRequestId = 0
 let oauthCompleteRequestId = 0
 
 // 设备授权状态
-type DeviceAuthType = 'default' | 'google' | 'github' | 'builder_id' | 'identity_center'
+type DeviceAuthType = 'default' | 'google' | 'github' | 'builder_id' | 'identity_center' | 'device'
 type WindsurfLoginOption = 'default' | 'google' | 'github'
 
 interface DeviceAuthState {
@@ -1074,9 +1198,10 @@ const isOpen = computed(() => props.open)
 const isKiroProvider = computed(() => (props.providerType || '').toLowerCase() === 'kiro')
 const isGrokProvider = computed(() => (props.providerType || '').toLowerCase() === 'grok')
 const isWindsurfProvider = computed(() => (props.providerType || '').toLowerCase() === 'windsurf')
+const isXaiProvider = computed(() => (props.providerType || '').toLowerCase() === 'xai')
 const isCodexProvider = computed(() => (props.providerType || '').toLowerCase() === 'codex')
 const isClaudeCodeProvider = computed(() => (props.providerType || '').toLowerCase() === 'claude_code')
-const isDeviceBrowserProvider = computed(() => isKiroProvider.value || isWindsurfProvider.value)
+const isDeviceBrowserProvider = computed(() => isKiroProvider.value || isWindsurfProvider.value || isXaiProvider.value)
 const showAuthorizationMode = computed(() => !isGrokProvider.value)
 const defaultMode = computed<DialogMode>(() => (isGrokProvider.value ? 'import' : 'oauth'))
 
@@ -1100,7 +1225,7 @@ const isManualDeviceCallbackPending = computed(() =>
 
 const authorizationModeLabel = computed(() => {
   if (isWindsurfProvider.value) return legacyT('浏览器登录')
-  if (isDeviceBrowserProvider.value) return legacyT('设备授权')
+  if (isXaiProvider.value || isDeviceBrowserProvider.value) return legacyT('设备授权')
   return legacyT('获取授权')
 })
 
@@ -1213,6 +1338,9 @@ const importManualPlaceholder = computed(() => {
   }
   if (isClaudeCodeProvider.value) {
     return legacyT('粘贴 Claude Refresh Token 或 Claude Code .credentials.json 内容')
+  }
+  if (isXaiProvider.value) {
+    return legacyT('粘贴 xAI API Key、Access Token，或包含 refresh_token / api_key 的 JSON')
   }
   if (isWindsurfProvider.value) {
     return legacyT('粘贴 show-auth-token Token、API key 或 JSON 内容')
@@ -1476,11 +1604,17 @@ function resetDevice() {
   totp.stop()
   const { auth_type, start_url, region, totp_secret } = device.value
   device.value = createInitialDeviceState()
-  device.value.auth_type = isWindsurfProvider.value ? (auth_type === 'google' || auth_type === 'github' ? auth_type : 'default') : auth_type
+  device.value.auth_type = isXaiProvider.value
+    ? 'device'
+    : isWindsurfProvider.value
+      ? (auth_type === 'google' || auth_type === 'github' ? auth_type : 'default')
+      : auth_type
   device.value.start_url = start_url
   device.value.region = region
   device.value.totp_secret = totp_secret
-  if (!isWindsurfProvider.value && (device.value.auth_type === 'google' || device.value.auth_type === 'github')) {
+  if (isXaiProvider.value) {
+    void ensureXaiDeviceAuth()
+  } else if (!isWindsurfProvider.value && (device.value.auth_type === 'google' || device.value.auth_type === 'github')) {
     void ensureKiroSocialDeviceAuth()
   }
 }
@@ -1499,6 +1633,8 @@ function resetForm() {
   device.value = createInitialDeviceState()
   if (isWindsurfProvider.value) {
     device.value.auth_type = 'default'
+  } else if (isXaiProvider.value) {
+    device.value.auth_type = 'device'
   }
   importText.value = ''
   importing.value = false
@@ -1530,6 +1666,8 @@ function switchMode(newMode: DialogMode) {
   if (newMode === 'oauth') {
     if (isKiroProvider.value) {
       void ensureKiroSocialDeviceAuth()
+    } else if (isXaiProvider.value) {
+      void ensureXaiDeviceAuth()
     } else if (!oauth.value.authorization_url && !oauth.value.starting) {
       initOAuth()
     }
@@ -1550,7 +1688,12 @@ function handleClose() {
 function openAuthorizationUrl() {
   const url = oauth.value.authorization_url
   if (!url) return
-  window.open(url, '_blank', 'noopener,noreferrer')
+  const safeUrl = safeExternalHttpsUrl(url)
+  if (!safeUrl) {
+    showError(legacyT('OAuth 服务返回了不安全的授权地址'))
+    return
+  }
+  window.open(safeUrl, '_blank', 'noopener,noreferrer')
 }
 
 async function initOAuth() {
@@ -1825,6 +1968,29 @@ function parseImportText(text: string): {
   // Kiro: keep full JSON so backend can extract auth_method/region/client_id, etc.
   if (isKiroProvider.value) {
     return { refresh_token: trimmed }
+  }
+
+  if (isXaiProvider.value) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed)
+      if (typeof parsed === 'object' && parsed !== null) {
+        const obj = parsed as Record<string, unknown>
+        const apiKey = normalizeStringField(obj.api_key) ?? normalizeStringField(obj.apiKey)
+        const refreshToken = normalizeStringField(obj.refresh_token) ?? normalizeStringField(obj.refreshToken)
+        const accessToken = normalizeStringField(obj.access_token) ?? normalizeStringField(obj.accessToken) ?? apiKey
+        if (refreshToken || accessToken) {
+          return {
+            refresh_token: refreshToken,
+            access_token: accessToken,
+            name: normalizeStringField(obj.name) ?? normalizeStringField(obj.email),
+            email: normalizeStringField(obj.email),
+          }
+        }
+      }
+    } catch {
+      // Raw xAI API keys / access tokens are imported as access_token.
+    }
+    return { access_token: trimmed }
   }
 
   if (isGrokProvider.value) {
@@ -2324,7 +2490,13 @@ async function handleCreateAgentIdentity() {
 
 function openDeviceVerificationUrl() {
   const url = device.value.verification_uri_complete || device.value.verification_uri
-  if (url) window.open(url, '_blank', 'noopener,noreferrer')
+  if (!url) return
+  const safeUrl = safeExternalHttpsUrl(url)
+  if (!safeUrl) {
+    showError(legacyT('OAuth 服务返回了不安全的设备验证地址'))
+    return
+  }
+  window.open(safeUrl, '_blank', 'noopener,noreferrer')
 }
 
 function startCountdown() {
@@ -2355,17 +2527,20 @@ async function startDeviceAuth() {
   device.value.error = ''
   try {
     const isWindsurf = isWindsurfProvider.value
+    const isXai = isXaiProvider.value
     const isBuilderID = requestedAuthType === 'builder_id'
-    const isSocial = requestedAuthType === 'google' || requestedAuthType === 'github'
+    const isSocial = !isXai && (requestedAuthType === 'google' || requestedAuthType === 'github')
     const windsurfLoginOption: WindsurfLoginOption = isSocial ? requestedAuthType : 'default'
     const authTypeForRequest = isWindsurf
       ? 'browser'
-      : (requestedAuthType === 'default' ? 'google' : requestedAuthType)
+      : isXai
+        ? 'device'
+        : (requestedAuthType === 'default' ? 'google' : requestedAuthType)
     const resp = await startDeviceAuthorize(props.providerId, {
       auth_type: authTypeForRequest,
       login_option: isWindsurf ? windsurfLoginOption : undefined,
-      start_url: isWindsurf ? undefined : (isBuilderID ? BUILDER_ID_START_URL : (isSocial ? undefined : (device.value.start_url.trim() || undefined))),
-      region: isWindsurf ? undefined : (isBuilderID || isSocial ? BUILDER_ID_REGION : (device.value.region.trim() || undefined)),
+      start_url: (isWindsurf || isXai) ? undefined : (isBuilderID ? BUILDER_ID_START_URL : (isSocial ? undefined : (device.value.start_url.trim() || undefined))),
+      region: (isWindsurf || isXai) ? undefined : (isBuilderID || isSocial ? BUILDER_ID_REGION : (device.value.region.trim() || undefined)),
       proxy_node_id: selectedProxyNodeId.value || undefined,
     })
     if (requestId !== deviceAuthRequestId || device.value.auth_type !== requestedAuthType) return
@@ -2402,6 +2577,13 @@ async function ensureKiroSocialDeviceAuth() {
   if (!props.open || !props.providerId || !isKiroProvider.value || !isSocialDeviceAuth.value) return
   if (device.value.starting) return
   if (device.value.session_id && device.value.status === 'pending') return
+  await startDeviceAuth()
+}
+
+async function ensureXaiDeviceAuth() {
+  if (!props.open || !props.providerId || !isXaiProvider.value) return
+  if (device.value.starting) return
+  if (device.value.session_id && (device.value.status === 'pending' || device.value.status === 'authorized')) return
   await startDeviceAuth()
 }
 
@@ -2513,6 +2695,9 @@ watch(
       }
       if (isWindsurfProvider.value) {
         device.value.auth_type = 'default'
+      } else if (isXaiProvider.value) {
+        device.value.auth_type = 'device'
+        void ensureXaiDeviceAuth()
       } else if (isKiroProvider.value) {
         void ensureKiroSocialDeviceAuth()
       } else {
@@ -2542,6 +2727,9 @@ watch(
       device.value.auth_type = ['default', 'google', 'github'].includes(device.value.auth_type)
         ? device.value.auth_type
         : 'default'
+    } else if (props.open && isXaiProvider.value && mode.value === 'oauth') {
+      device.value.auth_type = 'device'
+      void ensureXaiDeviceAuth()
     } else if (props.open && isKiroProvider.value && mode.value === 'oauth') {
       void ensureKiroSocialDeviceAuth()
     }

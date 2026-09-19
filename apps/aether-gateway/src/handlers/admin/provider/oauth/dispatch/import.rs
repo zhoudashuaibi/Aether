@@ -225,10 +225,9 @@ async fn prepare_codex_agent_identity_enrollment(
                     "该 ChatGPT 账号正在创建 Agent Identity，请稍后重试",
                 ));
             }
-            Err(error) => {
+            Err(_) => {
                 tracing::warn!(
                     provider_id = %provider_id,
-                    error = ?error,
                     "gateway Agent Identity enrollment lock unavailable"
                 );
                 release_codex_agent_identity_leases(state, leases).await;
@@ -296,11 +295,10 @@ fn spawn_codex_agent_identity_enrollment_heartbeat(
                         );
                         return;
                     }
-                    Err(error) => {
+                    Err(_) => {
                         lease_lost.store(true, Ordering::Release);
                         tracing::error!(
                             lock_key = %lease.key,
-                            error = ?error,
                             "gateway Agent Identity enrollment lock renewal failed"
                         );
                         return;
@@ -316,10 +314,9 @@ async fn release_codex_agent_identity_leases(
     leases: Vec<RuntimeLockLease>,
 ) {
     for lease in leases {
-        if let Err(error) = state.runtime_state().lock_release(&lease).await {
+        if state.runtime_state().lock_release(&lease).await.is_err() {
             tracing::warn!(
                 lock_key = %lease.key,
-                error = ?error,
                 "gateway Agent Identity enrollment lock release failed"
             );
         }
@@ -460,6 +457,9 @@ fn apply_single_import_hints(
                 .or_insert_with(|| json!(project_id));
         }
         for (target, keys) in [
+            // Antigravity token responses omit the account email, so retain the
+            // identity carried by the imported credential payload.
+            ("email", &["email", "oauth_email"][..]),
             (
                 "client_version",
                 &[
@@ -715,7 +715,7 @@ async fn resolve_admin_provider_oauth_single_import_tokens(
     if !provider_type_supports_access_token_import(provider_type) {
         return Err(build_internal_control_error_response(
             http::StatusCode::BAD_REQUEST,
-            "Access Token 导入仅支持 Claude Code / Codex / ChatGPT Web / Grok Provider",
+            "Access Token 导入仅支持 Claude Code / Codex / ChatGPT Web / Grok / xAI Provider",
         ));
     }
 
@@ -867,7 +867,7 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
         flatten_claude_code_credentials_payload(&mut raw_payload);
     }
     let refresh_token_input = import_payload_string(&raw_payload, "refresh_token", "refreshToken");
-    let access_token_input = import_payload_string_any(
+    let mut access_token_input = import_payload_string_any(
         &raw_payload,
         &[
             "access_token",
@@ -879,6 +879,9 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
         ],
     )
     .or_else(|| provider_oauth_import_authorization_bearer_token_from_object(&raw_payload));
+    if provider_type == "xai" && access_token_input.is_none() {
+        access_token_input = import_payload_string(&raw_payload, "api_key", "apiKey");
+    }
     let imported_expires_at =
         import_payload_u64_any(&raw_payload, &["expires_at", "expiresAt", "expired"]);
     let (refresh_token_input, access_token_input) = normalize_provider_import_tokens(
@@ -901,7 +904,11 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
     if !create_agent_identity && refresh_token_input.is_none() && access_token_input.is_none() {
         return Ok(build_internal_control_error_response(
             http::StatusCode::BAD_REQUEST,
-            "Refresh Token、Access Token 或 sso_token 不能为空",
+            if provider_type == "xai" {
+                "Refresh Token、Access Token 或 api_key 不能为空"
+            } else {
+                "Refresh Token、Access Token 或 sso_token 不能为空"
+            },
         ));
     }
     if !is_fixed_provider_type_for_provider_oauth(&provider_type) {
@@ -1198,11 +1205,10 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
                     match state.resolve_local_oauth_request_auth(&transport).await {
                         Ok(Some(_)) => true,
                         Ok(None) => false,
-                        Err(error) => {
+                        Err(_) => {
                             tracing::warn!(
                                 provider_id = %provider_id,
                                 key_id = %persisted_key.id,
-                                error = ?error,
                                 "gateway Agent Identity initial task registration failed"
                             );
                             false
@@ -1210,11 +1216,10 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
                     }
                 }
                 Ok(None) => false,
-                Err(error) => {
+                Err(_) => {
                     tracing::warn!(
                         provider_id = %provider_id,
                         key_id = %persisted_key.id,
-                        error = ?error,
                         "gateway Agent Identity pending transport reload failed"
                     );
                     false
@@ -1461,7 +1466,8 @@ mod tests {
             },
             "clientVersion": "1.99.0",
             "sessionId": "session-antigravity-1",
-            "userAgent": "antigravity"
+            "userAgent": "antigravity",
+            "email": "anti@example.com"
         })
         .as_object()
         .cloned()
@@ -1470,6 +1476,7 @@ mod tests {
 
         apply_single_import_hints("antigravity", &payload, &mut auth_config);
 
+        assert_eq!(auth_config.get("email"), Some(&json!("anti@example.com")));
         assert_eq!(
             auth_config.get("project_id"),
             Some(&json!("project-antigravity-1"))

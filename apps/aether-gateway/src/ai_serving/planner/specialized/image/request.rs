@@ -9,6 +9,7 @@ use crate::ai_serving::planner::candidate_preparation::{
 };
 use crate::ai_serving::planner::spec_metadata::local_openai_image_spec_metadata;
 use crate::ai_serving::pure::normalize_openai_image_request_with_options;
+use crate::ai_serving::transport::antigravity::is_antigravity_provider_transport;
 use crate::ai_serving::transport::{
     build_grok_browser_headers, build_grok_upstream_url, build_openai_image_headers,
     build_openai_image_upstream_url, build_standard_provider_request_headers,
@@ -16,8 +17,8 @@ use crate::ai_serving::transport::{
     ProviderOpenAiImageHeadersInput, StandardProviderRequestHeadersInput, GROK_CHAT_PATH,
 };
 use crate::ai_serving::{
-    apply_codex_openai_special_headers, build_chatgpt_web_image_request_body,
-    build_codex_openai_image_api_provider_request_body,
+    apply_codex_openai_special_headers, apply_xai_upstream_payload_edits,
+    build_chatgpt_web_image_request_body, build_codex_openai_image_api_provider_request_body,
     build_gemini_image_request_body_from_openai_image_request,
     build_openai_image_api_provider_request_body, build_openai_image_provider_request_body,
     default_model_for_openai_image_operation, normalize_openai_image_request,
@@ -210,7 +211,7 @@ pub(super) async fn resolve_local_openai_image_candidate_payload_parts(
             upstream_is_stream,
         )
     };
-    let Some(provider_request_body) = provider_request_body else {
+    let Some(mut provider_request_body) = provider_request_body else {
         mark_skipped_local_openai_image_candidate_with_failure_diagnostic(
             state,
             input,
@@ -228,6 +229,11 @@ pub(super) async fn resolve_local_openai_image_candidate_payload_parts(
         .await;
         return None;
     };
+    apply_xai_upstream_payload_edits(
+        &mut provider_request_body,
+        transport.provider.provider_type.as_str(),
+        provider_api_format,
+    );
     let Some(mut provider_request_headers) = (if is_grok {
         build_grok_browser_headers(GrokHeaderInput {
             transport,
@@ -338,6 +344,25 @@ async fn resolve_local_openai_image_to_gemini_candidate_payload_parts(
     let candidate = &attempt.eligible.candidate;
     let transport = &attempt.eligible.transport;
     let provider_api_format = "gemini:generate_content";
+
+    // The gemini:generate_content URL hook rewrites an Antigravity endpoint to
+    // /v1internal:, and this image path has no v1internal envelope to match it.
+    // Skip the candidate instead of posting a bare Gemini body that upstream
+    // would only reject.
+    if is_antigravity_provider_transport(transport) {
+        mark_skipped_local_openai_image_candidate(
+            state,
+            input,
+            trace_id,
+            candidate,
+            attempt.candidate_index,
+            &attempt.candidate_id,
+            "transport_unsupported",
+        )
+        .await;
+        return None;
+    }
+
     let effective_headers = input.effective_headers(&parts.headers);
 
     let prepared_candidate = match prepare_header_authenticated_candidate(

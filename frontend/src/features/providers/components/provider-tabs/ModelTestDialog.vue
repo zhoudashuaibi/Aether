@@ -875,7 +875,7 @@ const modelMappingAvailable = computed(
   () => props.modelMappingAvailable === true && modelMappingOptions.value.length > 0,
 )
 const showKeySelector = computed(() => (
-  keyOptionsLoading.value || keyOptions.value.length > 0 || selectedKeyIds.value.length > 0
+  props.keyOptions !== undefined || keyOptionsLoading.value || selectedKeyIds.value.length > 0
 ))
 const keySelectorPlaceholder = computed(() => (
   keyOptionsLoading.value && keyOptions.value.length === 0 ? '正在加载 Key' : '默认调度（不指定 Key）'
@@ -1386,6 +1386,7 @@ function formatAuthType(authType: string): string {
   if (lowered === 'antigravity') return 'Antigravity OAuth'
   if (lowered === 'kiro') return 'Kiro OAuth'
   if (lowered === 'grok') return 'Grok OAuth'
+  if (lowered === 'xai') return 'xAI OAuth'
   return authType
 }
 

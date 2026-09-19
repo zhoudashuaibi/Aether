@@ -10,6 +10,9 @@ use super::{
 fn rust_authoritative_service_projects_openai_status_into_local_read_response() {
     let service = VideoTaskService::new(VideoTaskTruthSourceMode::RustAuthoritative);
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
+        local_short_id: None,
+        native_response: None,
+        xai_provider: false,
         local_task_id: "task-local-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
         created_at_unix_ms: 1712345678,
@@ -57,8 +60,8 @@ fn rust_authoritative_service_projects_openai_status_into_local_read_response() 
             "progress": 100,
             "completed_at": 1712345688u64,
             "error": {
-                "code": "upstream_failed",
-                "message": "provider failed"
+                "code": "Bearer code-secret",
+                "message": "request failed at https://internal.test/result?token=message-secret"
             }
         })
         .as_object()
@@ -79,14 +82,23 @@ fn rust_authoritative_service_projects_openai_status_into_local_read_response() 
             .get("error")
             .and_then(Value::as_object)
             .and_then(|value| value.get("code")),
-        Some(&json!("upstream_failed"))
+        Some(&json!("provider_error"))
     );
+    assert_eq!(
+        failed.body_json["error"]["message"],
+        "Video generation failed"
+    );
+    assert!(!failed.body_json.to_string().contains("code-secret"));
+    assert!(!failed.body_json.to_string().contains("message-secret"));
 }
 
 #[test]
 fn rust_authoritative_service_builds_openai_content_stream_plan_from_direct_video_url() {
     let service = VideoTaskService::new(VideoTaskTruthSourceMode::RustAuthoritative);
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
+        local_short_id: None,
+        native_response: None,
+        xai_provider: false,
         local_task_id: "task-local-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
         created_at_unix_ms: 1712345678,
@@ -125,12 +137,37 @@ fn rust_authoritative_service_builds_openai_content_stream_plan_from_direct_vide
         "https://cdn.example.com/ext-video-task-123.mp4"
     );
     assert!(plan.headers.is_empty());
+
+    assert!(service
+        .prepare_openai_content_stream_action_for_user(
+            "/v1/videos/task-local-123/content",
+            Some("variant=video"),
+            "trace-foreign-content-123",
+            "user-foreign",
+        )
+        .is_none());
+
+    let owner_action = service
+        .prepare_openai_content_stream_action_for_user(
+            "/v1/videos/task-local-123/content",
+            Some("variant=video"),
+            "trace-owner-content-123",
+            "user-123",
+        )
+        .expect("owner content action should exist");
+    assert!(matches!(
+        owner_action,
+        LocalVideoTaskContentAction::StreamPlan(_)
+    ));
 }
 
 #[test]
 fn rust_authoritative_service_returns_processing_content_response_for_pending_openai_task() {
     let service = VideoTaskService::new(VideoTaskTruthSourceMode::RustAuthoritative);
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
+        local_short_id: None,
+        native_response: None,
+        xai_provider: false,
         local_task_id: "task-local-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
         created_at_unix_ms: 1712345678,
@@ -197,7 +234,9 @@ fn rust_authoritative_service_projects_gemini_status_into_local_read_response() 
         json!({
             "done": false,
             "metadata": {
-                "state": "PROCESSING"
+                "state": "PROCESSING",
+                "authorization": "Bearer metadata-secret",
+                "debug_url": "https://internal.test/status?token=query-secret"
             }
         })
         .as_object()
@@ -211,10 +250,9 @@ fn rust_authoritative_service_projects_gemini_status_into_local_read_response() 
         .expect("processing read response should exist");
     assert_eq!(processing.status_code, 200);
     assert_eq!(processing.body_json.get("done"), Some(&json!(false)));
-    assert_eq!(
-        processing.body_json.get("metadata"),
-        Some(&json!({"state": "PROCESSING"}))
-    );
+    assert_eq!(processing.body_json.get("metadata"), Some(&json!({})));
+    assert!(!processing.body_json.to_string().contains("metadata-secret"));
+    assert!(!processing.body_json.to_string().contains("query-secret"));
 
     assert!(service.project_gemini_task_response(
         "localshort123",

@@ -5,7 +5,6 @@ pub struct ProviderOAuthTemplate {
     pub authorize_url: &'static str,
     pub token_url: &'static str,
     pub client_id: &'static str,
-    pub client_secret: &'static str,
     pub scopes: &'static [&'static str],
     pub redirect_uri: &'static str,
     pub use_pkce: bool,
@@ -276,6 +275,17 @@ const WINDSURF_RUNTIME_POLICY: ProviderRuntimePolicy = ProviderRuntimePolicy {
     ..STANDARD_RUNTIME_POLICY
 };
 
+const XAI_RUNTIME_POLICY: ProviderRuntimePolicy = ProviderRuntimePolicy {
+    fixed_provider: true,
+    api_format_inheritance: ProviderApiFormatInheritance::OAuthOrBearer,
+    enable_format_conversion_by_default: true,
+    oauth_is_bearer_like: true,
+    supports_model_fetch: false,
+    supports_local_openai_chat_transport: false,
+    supports_local_same_format_transport: true,
+    ..STANDARD_RUNTIME_POLICY
+};
+
 const CLAUDE_CODE_FIXED_PROVIDER_TEMPLATE: FixedProviderTemplate = FixedProviderTemplate {
     provider_type: "claude_code",
     version: 2,
@@ -447,6 +457,39 @@ const WINDSURF_FIXED_PROVIDER_TEMPLATE: FixedProviderTemplate = FixedProviderTem
     runtime_policy: WINDSURF_RUNTIME_POLICY,
 };
 
+const XAI_FIXED_PROVIDER_TEMPLATE: FixedProviderTemplate = FixedProviderTemplate {
+    provider_type: "xai",
+    version: 2,
+    base_url: crate::xai::XAI_CHAT_PROXY_BASE_URL,
+    endpoints: &[
+        FixedProviderEndpointTemplate {
+            item_key: "openai:responses",
+            api_format: "openai:responses",
+            custom_path: None,
+            config_defaults: FORCE_STREAM_ENDPOINT_CONFIG_DEFAULTS,
+        },
+        FixedProviderEndpointTemplate {
+            item_key: "openai:responses:compact",
+            api_format: "openai:responses:compact",
+            custom_path: None,
+            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
+        },
+        FixedProviderEndpointTemplate {
+            item_key: "openai:image",
+            api_format: "openai:image",
+            custom_path: None,
+            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
+        },
+        FixedProviderEndpointTemplate {
+            item_key: "openai:video",
+            api_format: "openai:video",
+            custom_path: None,
+            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
+        },
+    ],
+    runtime_policy: XAI_RUNTIME_POLICY,
+};
+
 pub fn provider_type_is_fixed(provider_type: &str) -> bool {
     provider_runtime_policy(provider_type).fixed_provider
 }
@@ -499,6 +542,7 @@ pub fn fixed_provider_template(provider_type: &str) -> Option<&'static FixedProv
         "vertex_ai" => Some(&VERTEX_AI_FIXED_PROVIDER_TEMPLATE),
         "antigravity" => Some(&ANTIGRAVITY_FIXED_PROVIDER_TEMPLATE),
         "windsurf" => Some(&WINDSURF_FIXED_PROVIDER_TEMPLATE),
+        "xai" => Some(&XAI_FIXED_PROVIDER_TEMPLATE),
         _ => None,
     }
 }
@@ -550,7 +594,6 @@ pub fn provider_type_admin_oauth_template(provider_type: &str) -> Option<Provide
             authorize_url: aether_oauth::provider::providers::CLAUDE_CODE_AUTHORIZE_URL,
             token_url: aether_oauth::provider::providers::CLAUDE_CODE_TOKEN_URL,
             client_id: aether_oauth::provider::providers::CLAUDE_CODE_CLIENT_ID,
-            client_secret: "",
             scopes: aether_oauth::provider::providers::CLAUDE_CODE_OAUTH_SCOPES,
             redirect_uri: aether_oauth::provider::providers::CLAUDE_CODE_REDIRECT_URI,
             use_pkce: true,
@@ -561,7 +604,6 @@ pub fn provider_type_admin_oauth_template(provider_type: &str) -> Option<Provide
             authorize_url: "https://auth.openai.com/oauth/authorize",
             token_url: "https://auth.openai.com/oauth/token",
             client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
-            client_secret: "",
             scopes: &["openid", "email", "profile", "offline_access"],
             redirect_uri: "http://localhost:1455/auth/callback",
             use_pkce: true,
@@ -572,7 +614,6 @@ pub fn provider_type_admin_oauth_template(provider_type: &str) -> Option<Provide
             authorize_url: "https://auth.openai.com/oauth/authorize",
             token_url: "https://auth.openai.com/oauth/token",
             client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
-            client_secret: "",
             scopes: &["openid", "email", "profile", "offline_access"],
             redirect_uri: "http://localhost:1455/auth/callback",
             use_pkce: true,
@@ -583,7 +624,6 @@ pub fn provider_type_admin_oauth_template(provider_type: &str) -> Option<Provide
             authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
             client_id: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
-            client_secret: "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",
             scopes: &[
                 "https://www.googleapis.com/auth/cloud-platform",
                 "https://www.googleapis.com/auth/userinfo.email",
@@ -598,7 +638,6 @@ pub fn provider_type_admin_oauth_template(provider_type: &str) -> Option<Provide
             authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
             client_id: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-            client_secret: "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",
             scopes: &[
                 "https://www.googleapis.com/auth/cloud-platform",
                 "https://www.googleapis.com/auth/userinfo.email",
@@ -615,9 +654,18 @@ pub fn provider_type_admin_oauth_template(provider_type: &str) -> Option<Provide
             authorize_url: "https://windsurf.com/windsurf/signin",
             token_url: "https://register.windsurf.com/exa.seat_management_pb.SeatManagementService/RegisterUser",
             client_id: "3GUryQ7ldAeKEuD2obYnppsnmj58eP5u",
-            client_secret: "",
             scopes: &[],
             redirect_uri: "show-auth-token",
+            use_pkce: false,
+        }),
+        "xai" => Some(ProviderOAuthTemplate {
+            provider_type: "xai",
+            display_name: "xAI",
+            authorize_url: aether_oauth::provider::providers::XAI_DEVICE_CODE_URL,
+            token_url: aether_oauth::provider::providers::XAI_TOKEN_URL,
+            client_id: aether_oauth::provider::providers::XAI_CLIENT_ID,
+            scopes: aether_oauth::provider::providers::XAI_OAUTH_SCOPES,
+            redirect_uri: "",
             use_pkce: false,
         }),
         _ => None,
@@ -830,6 +878,50 @@ mod tests {
         );
         assert_eq!(template.redirect_uri, "show-auth-token");
         assert!(ADMIN_PROVIDER_OAUTH_TEMPLATE_TYPES.contains(&"windsurf"));
+    }
+
+    #[test]
+    fn xai_fixed_provider_template_exposes_responses_media_endpoints() {
+        let template = fixed_provider_template("xai").expect("xai template should exist");
+        assert_eq!(template.provider_type, "xai");
+        assert_eq!(template.base_url, crate::xai::XAI_CHAT_PROXY_BASE_URL);
+        assert_eq!(template.version, 2);
+        assert_eq!(
+            template
+                .endpoints
+                .iter()
+                .map(|item| item.api_format)
+                .collect::<Vec<_>>(),
+            vec![
+                "openai:responses",
+                "openai:responses:compact",
+                "openai:image",
+                "openai:video"
+            ]
+        );
+
+        let policy = provider_runtime_policy("xai");
+        assert!(policy.fixed_provider);
+        assert!(policy.enable_format_conversion_by_default);
+        assert!(policy.oauth_is_bearer_like);
+        assert!(!policy.supports_model_fetch);
+        assert!(policy.supports_local_same_format_transport);
+        assert!(!policy.supports_local_openai_chat_transport);
+        assert!(fixed_provider_key_inherits_api_formats(
+            "xai", "oauth", None
+        ));
+        assert!(fixed_provider_key_inherits_api_formats(
+            "xai", "bearer", None
+        ));
+
+        let template = provider_type_admin_oauth_template("xai").expect("xai oauth template");
+        assert_eq!(template.provider_type, "xai");
+        assert_eq!(template.display_name, "xAI");
+        assert_eq!(
+            template.token_url,
+            aether_oauth::provider::providers::XAI_TOKEN_URL
+        );
+        assert!(!ADMIN_PROVIDER_OAUTH_TEMPLATE_TYPES.contains(&"xai"));
     }
 
     #[test]

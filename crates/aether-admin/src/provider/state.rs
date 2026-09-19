@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 const KIRO_DEVICE_DEFAULT_START_URL: &str = "https://view.awsapps.com/start";
 const KIRO_DEVICE_DEFAULT_REGION: &str = "us-east-1";
+const MAX_UNVERIFIED_JWT_CLAIMS_BYTES: usize = 64 * 1024;
 
 pub fn current_unix_secs() -> u64 {
     SystemTime::now()
@@ -112,7 +113,18 @@ pub fn json_u64_value(value: Option<&Value>) -> Option<u64> {
 
 pub fn decode_jwt_claims(token: &str) -> Option<Map<String, Value>> {
     let payload = token.split('.').nth(1)?;
+    let max_encoded_len = MAX_UNVERIFIED_JWT_CLAIMS_BYTES
+        .saturating_add(2)
+        .checked_div(3)
+        .unwrap_or(usize::MAX)
+        .saturating_mul(4);
+    if payload.len() > max_encoded_len {
+        return None;
+    }
     let bytes = URL_SAFE_NO_PAD.decode(payload.as_bytes()).ok()?;
+    if bytes.len() > MAX_UNVERIFIED_JWT_CLAIMS_BYTES {
+        return None;
+    }
     serde_json::from_slice::<Value>(&bytes)
         .ok()?
         .as_object()
@@ -273,6 +285,23 @@ pub fn enrich_admin_provider_oauth_auth_config(
         ],
     );
 
+    if provider_type.trim().eq_ignore_ascii_case("xai") {
+        auth_config.insert("auth_method".to_string(), json!("oauth"));
+        auth_config.insert("using_api".to_string(), json!(false));
+        if let Some(id_token) = ["id_token", "idToken"]
+            .iter()
+            .find_map(|field| json_non_empty_string(token_payload.get(field)))
+        {
+            auth_config
+                .entry("id_token".to_string())
+                .or_insert_with(|| json!(id_token.clone()));
+            if let Some(claims) = decode_jwt_claims(&id_token) {
+                merge_missing_auth_config_fields(auth_config, &claims, &["email", "sub"]);
+            }
+        }
+        return;
+    }
+
     if provider_type.trim().eq_ignore_ascii_case("claude_code") {
         if let Some(organization_uuid) = token_payload_object
             .get("organization")
@@ -393,14 +422,39 @@ pub fn build_kiro_device_key_name(email: Option<&str>, refresh_token: Option<&st
                 .collect::<String>()
         })
         .unwrap_or_else(|| "unknown".to_string());
-    format!("kiro_{fallback} (idc)")
+    format!("账号_{fallback} (idc)")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{enrich_admin_provider_oauth_auth_config, parse_provider_oauth_callback_params};
+    use super::{
+        build_kiro_device_key_name, decode_jwt_claims, enrich_admin_provider_oauth_auth_config,
+        parse_provider_oauth_callback_params, MAX_UNVERIFIED_JWT_CLAIMS_BYTES,
+    };
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use serde_json::json;
+
+    #[test]
+    fn kiro_device_key_name_preserves_email_and_auth_method() {
+        assert_eq!(
+            build_kiro_device_key_name(Some("  kiro_user@example.com  "), Some("refresh-token-1")),
+            "kiro_user@example.com (idc)"
+        );
+    }
+
+    #[test]
+    fn kiro_device_key_name_without_email_uses_generic_account_prefix() {
+        for email in [None, Some(""), Some("  ")] {
+            assert_eq!(
+                build_kiro_device_key_name(email, Some("refresh-token-1")),
+                "账号_154f43 (idc)"
+            );
+            assert_eq!(
+                build_kiro_device_key_name(email, None),
+                "账号_unknown (idc)"
+            );
+        }
+    }
 
     fn sample_unsigned_jwt(payload: serde_json::Value) -> String {
         let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none","typ":"JWT"}"#);
@@ -515,5 +569,39 @@ mod tests {
         assert_eq!(auth_config.get("plan_type"), Some(&json!("plus")));
         assert_eq!(auth_config.get("user_id"), Some(&json!("user-image")));
         assert_eq!(auth_config.get("is_fedramp"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn xai_enrichment_marks_oauth_and_extracts_id_token_identity() {
+        let id_token = sample_unsigned_jwt(json!({
+            "email": "grok@x.ai",
+            "sub": "user-xai-1",
+        }));
+        let token_payload = json!({
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "id_token": id_token,
+        });
+        let mut auth_config = serde_json::Map::new();
+
+        enrich_admin_provider_oauth_auth_config("xai", &mut auth_config, &token_payload);
+
+        assert_eq!(auth_config.get("auth_method"), Some(&json!("oauth")));
+        assert_eq!(auth_config.get("using_api"), Some(&json!(false)));
+        assert_eq!(auth_config.get("email"), Some(&json!("grok@x.ai")));
+        assert_eq!(auth_config.get("sub"), Some(&json!("user-xai-1")));
+        assert_eq!(auth_config.get("id_token"), Some(&json!(id_token)));
+    }
+
+    #[test]
+    fn decode_jwt_claims_rejects_oversized_payload_before_decode() {
+        let max_encoded_len = MAX_UNVERIFIED_JWT_CLAIMS_BYTES
+            .saturating_add(2)
+            .checked_div(3)
+            .unwrap()
+            .saturating_mul(4);
+        let token = format!("header.{}.signature", "A".repeat(max_encoded_len + 1));
+
+        assert_eq!(decode_jwt_claims(&token), None);
     }
 }

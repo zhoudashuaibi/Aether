@@ -49,6 +49,10 @@ pub fn resolve_execution_runtime_stream_plan_kind_with_client_surface(
     method: &Method,
     path: &str,
 ) -> Option<&'static str> {
+    let path = path
+        .strip_prefix("/openai")
+        .filter(|p| *p == "/v1/videos" || p.starts_with("/v1/videos/"))
+        .unwrap_or(path);
     if route_class != Some("ai_public") {
         return None;
     }
@@ -181,6 +185,10 @@ pub fn resolve_execution_runtime_sync_plan_kind_with_client_surface(
     method: &Method,
     path: &str,
 ) -> Option<&'static str> {
+    let path = path
+        .strip_prefix("/openai")
+        .filter(|p| *p == "/v1/videos" || p.starts_with("/v1/videos/"))
+        .unwrap_or(path);
     if route_class != Some("ai_public") {
         return None;
     }
@@ -206,7 +214,10 @@ pub fn resolve_execution_runtime_sync_plan_kind_with_client_surface(
     if route_family == Some("openai")
         && route_kind == Some("video")
         && *method == Method::POST
-        && path == "/v1/videos"
+        && matches!(
+            path,
+            "/v1/videos" | "/v1/videos/generations" | "/v1/videos/edits" | "/v1/videos/extensions"
+        )
     {
         return Some(OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND);
     }
@@ -441,7 +452,19 @@ pub fn sanitize_request_path(path: &str) -> Option<String> {
         // including for malformed routes that will later be rejected.
         return Some("/v1/live/{call_id}".to_string());
     }
-    Some(path.to_string())
+    Some(sanitize_sensitive_request_path(path))
+}
+
+fn sanitize_sensitive_request_path(path: &str) -> String {
+    for prefix in ["/install-tunnel/", "/install/", "/i/"] {
+        if path
+            .strip_prefix(prefix)
+            .is_some_and(|secret| !secret.is_empty())
+        {
+            return format!("{prefix}[redacted]");
+        }
+    }
+    path.to_string()
 }
 
 pub fn sanitize_request_query_string(query: &str) -> Option<String> {
@@ -1019,6 +1042,29 @@ mod tests {
             )
             .as_deref(),
             Some("/v1/realtime?call_id=%7Bcall_id%7D")
+        );
+    }
+
+    #[test]
+    fn request_path_metadata_sanitizer_redacts_install_session_codes() {
+        for (raw, expected) in [
+            ("/install/secret-code", "/install/[redacted]"),
+            ("/install/secret-code.ps1", "/install/[redacted]"),
+            ("/i/secret-code", "/i/[redacted]"),
+            (
+                "/install-tunnel/secret-code.ps1?token=also-secret",
+                "/install-tunnel/[redacted]",
+            ),
+        ] {
+            assert_eq!(sanitize_request_path(raw).as_deref(), Some(expected));
+            assert_eq!(
+                sanitize_request_path_and_query(raw, None).as_deref(),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            sanitize_request_path("/install/").as_deref(),
+            Some("/install/")
         );
     }
 

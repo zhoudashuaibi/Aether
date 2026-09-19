@@ -15,8 +15,8 @@
 
 ## Boundaries and conventions
 - Preserve the contracts → driver adapters → repositories → backend composition → maintenance layering documented in `crates/aether-data/runtime/README.md`. Keep cross-crate types in `aether-data-contracts`; do not put domain queries in low-level pool modules or driver selection in repository implementations.
-- Database support is Postgres, MySQL, and SQLite. Keep driver-specific SQL separate and test relevant driver features. For schema changes, edit `crates/aether-data/runtime/schema/logical/*.toml` or the documented driver fragments—not `schema/generated/**`—then run the schema compose/check commands from that README.
-- The gateway is built with all data drivers for deployment compatibility; new services should enable only their deployed driver.
+- Database support is PostgreSQL only after the September 2026 upstream sync. Keep PostgreSQL SQL in its adapter and test the deployed driver feature. For schema changes, edit `crates/aether-data/runtime/schema/logical/*.toml` or the documented driver fragments—not `schema/generated/**`—then run the schema compose/check commands from that README.
+- The gateway uses PostgreSQL; the compatibility feature `all-drivers` now selects PostgreSQL only. SQLite/MySQL deployments need a separate data migration before upgrading.
 - Keep `aether-ai-formats` limited to parsing, emitting, and conversion; transport policy belongs outside it. Preserve parsed unknown JSON fields for same-format requests, and fail closed rather than silently dropping unaudited cross-format fields.
 - Match nearby Rust style and run rustfmt. Rust CI treats Clippy warnings as errors.
 - Frontend components use Vue `<script setup>` and PascalCase component tags. Unused TypeScript args/variables must start with `_`; avoid `any`. `console` is forbidden in production except in `main.ts` and `logger.ts`.

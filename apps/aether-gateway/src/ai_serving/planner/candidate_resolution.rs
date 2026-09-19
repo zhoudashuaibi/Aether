@@ -23,7 +23,9 @@ use crate::ai_serving::{
 use crate::orchestration::LocalExecutionCandidateMetadata;
 use crate::stage_metrics::observe_gateway_stage_ms;
 
-use super::candidate_ranking::rank_eligible_local_execution_candidates;
+use super::candidate_ranking::{
+    rank_eligible_local_execution_candidates, scheduler_ordering_config_for_routing_policy,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EligibleLocalExecutionCandidate {
@@ -91,6 +93,16 @@ impl AiCandidateResolutionPort for GatewayLocalCandidateResolutionPort<'_> {
         &self,
         candidate: Self::Candidate,
     ) -> Self::Skipped {
+        warn!(
+            event_name = "local_candidate_skipped",
+            log_type = "event",
+            provider_id = %candidate.provider_id,
+            endpoint_id = %candidate.endpoint_id,
+            key_id = %candidate.key_id,
+            api_format = %candidate.endpoint_api_format,
+            skip_reason = "transport_snapshot_missing",
+            "local execution candidate skipped during planning"
+        );
         SkippedLocalExecutionCandidate {
             candidate,
             skip_reason: "transport_snapshot_missing",
@@ -143,6 +155,16 @@ impl AiCandidateResolutionPort for GatewayLocalCandidateResolutionPort<'_> {
         transport: Self::Transport,
         skip_reason: &'static str,
     ) -> Self::Skipped {
+        warn!(
+            event_name = "local_candidate_skipped",
+            log_type = "event",
+            provider_id = %candidate.provider_id,
+            endpoint_id = %candidate.endpoint_id,
+            key_id = %candidate.key_id,
+            api_format = %candidate.endpoint_api_format,
+            skip_reason,
+            "local execution candidate skipped during planning"
+        );
         SkippedLocalExecutionCandidate {
             candidate,
             skip_reason,
@@ -378,8 +400,17 @@ async fn resolve_and_rank_local_execution_candidates_with_pool_expansion(
                 "candidate_resolution_core",
                 started_at.elapsed().as_millis() as u64,
             );
+            let sticky_key_attempts = if outcome.eligible_candidates.is_empty() {
+                None
+            } else {
+                Some(
+                    scheduler_ordering_config_for_routing_policy(routing_policy)
+                        .sticky_key_attempts,
+                )
+            };
             for candidate in &mut outcome.eligible_candidates {
                 candidate.orchestration.scheduler_affinity_epoch = Some(scheduler_affinity_epoch);
+                candidate.orchestration.sticky_key_attempts = sticky_key_attempts;
             }
             (outcome.eligible_candidates, outcome.skipped_candidates)
         }
