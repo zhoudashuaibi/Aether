@@ -1,6 +1,9 @@
 use aether_contracts::StandardizedUsage;
 use serde_json::{Map, Value};
 
+/// Internal provenance, consumed before persisting public usage dimensions.
+pub const SIMULATED_CACHE_APPLIED_DIMENSION: &str = "aether_simulated_cache_applied";
+
 /// The gateway selects a ratio once per attempt; format code only maps usage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulatedCachePolicy {
@@ -52,6 +55,9 @@ impl SimulatedCachePolicy {
         usage.cache_creation_tokens = 0;
         usage.cache_creation_ephemeral_5m_tokens = 0;
         usage.cache_creation_ephemeral_1h_tokens = 0;
+        usage
+            .dimensions
+            .insert(SIMULATED_CACHE_APPLIED_DIMENSION.into(), Value::Bool(true));
     }
 }
 

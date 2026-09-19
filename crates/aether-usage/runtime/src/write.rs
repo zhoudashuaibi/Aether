@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use aether_ai_formats::formats::shared::simulated_cache::{
     response_gross_input_tokens, standardized_gross_input_tokens, SimulatedCachePolicy,
+    SIMULATED_CACHE_APPLIED_DIMENSION,
 };
 use aether_ai_formats::UPSTREAM_IS_STREAM_KEY;
 use aether_contracts::{ExecutionPlan, ExecutionTelemetry};
@@ -712,8 +713,30 @@ fn build_terminal_usage_event_from_seed_impl(
         .filter(|response_body| response_body.is_object())
         .map(|response_body| map_usage_from_response(response_body, provider_contract.as_str()))
         .filter(StandardizedUsage::has_token_signal);
-    let standardized_usage =
+    // A richer captured provider body can add output/reasoning details, but must not
+    // restore native cache accounting after an explicit simulation override.
+    let simulated_cache = standardized_usage
+        .as_ref()
+        .filter(|usage| {
+            usage
+                .dimensions
+                .get(SIMULATED_CACHE_APPLIED_DIMENSION)
+                .and_then(Value::as_bool)
+                == Some(true)
+        })
+        .map(|usage| {
+            (
+                standardized_gross_input_tokens(usage, &provider_contract),
+                usage.cache_read_tokens.max(0) as u64,
+            )
+        });
+    let mut standardized_usage =
         StandardizedUsage::choose_more_complete(standardized_usage, derived_standardized_usage);
+    if let (Some(usage), Some((gross_input, read))) = (standardized_usage.as_mut(), simulated_cache)
+    {
+        SimulatedCachePolicy::Fixed(read).apply_to_usage(usage, &provider_contract, gross_input);
+        usage.dimensions.remove(SIMULATED_CACHE_APPLIED_DIMENSION);
+    }
     let request_metadata = if trusted_request_metadata {
         merge_usage_request_metadata_owned(request_metadata, audit_payload)
     } else {
@@ -6589,7 +6612,7 @@ mod tests {
             ),
             (
                 "claude:messages",
-                json!({"usage":{"input_tokens":100,"cache_read_input_tokens":100,"cache_creation_input_tokens":100,"output_tokens":100}}),
+                json!({"usage":{"input_tokens":100,"cache_read_input_tokens":100,"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_5m_input_tokens":50,"ephemeral_1h_input_tokens":50},"output_tokens":100}}),
                 150,
                 150,
             ),
@@ -6634,6 +6657,35 @@ mod tests {
                 "{format}"
             );
             assert_eq!(event.data.output_tokens, Some(100));
+            assert!(event.data.cache_creation_input_tokens.is_none());
+            assert!(event
+                .data
+                .request_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.pointer("/dimensions/aether_simulated_cache_applied"))
+                .is_none());
+            // Zero and full hits must also survive richer native cache breakdowns.
+            for bps in [0, 10_000] {
+                payload.report_context.as_mut().unwrap()["simulated_cache_hit_basis_points"] =
+                    json!(bps);
+                let seed = build_sync_terminal_usage_seed(
+                    build_terminal_usage_context_seed(&plan, payload.report_context.as_ref()),
+                    build_sync_terminal_usage_payload_seed(&payload),
+                );
+                let expected = seed.standardized_usage.as_ref().unwrap().clone();
+                let event = build_terminal_usage_event_from_seed(seed).expect("usage event");
+                assert_eq!(
+                    event.data.input_tokens.unwrap_or(0),
+                    expected.input_tokens as u64,
+                    "{format} {bps}"
+                );
+                assert_eq!(
+                    event.data.cache_read_input_tokens.unwrap_or(0),
+                    expected.cache_read_tokens as u64,
+                    "{format} {bps}"
+                );
+                assert!(event.data.cache_creation_input_tokens.is_none());
+            }
         }
     }
 
