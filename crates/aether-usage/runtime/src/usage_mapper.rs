@@ -33,8 +33,7 @@ impl UsageMapper {
     }
 
     pub fn map_from_response(response: &serde_json::Value, api_format: &str) -> StandardizedUsage {
-        let family = api_family(api_format);
-        let mut usage = if let Some(usage_value) = resolve_usage_value(response, family.as_str()) {
+        let mut usage = if let Some(usage_value) = resolve_usage_value(response, api_format) {
             Self::map(usage_value, api_format, None)
         } else {
             StandardizedUsage::new()
@@ -317,13 +316,10 @@ fn get_nested_value<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a 
 
 fn resolve_usage_value<'a>(
     response: &'a serde_json::Value,
-    family: &str,
+    api_format: &str,
 ) -> Option<&'a serde_json::Value> {
-    match family {
-        "gemini" | "google" => {
-            if let Some(usage) = response.get("usage") {
-                return Some(usage);
-            }
+    match api_family(api_format).as_str() {
+        "gemini" | "google" if api_kind(api_format) != "interactions" => {
             if let Some(usage) = response.get("usageMetadata") {
                 return Some(usage);
             }
@@ -344,7 +340,7 @@ fn resolve_usage_value<'a>(
 
     for nested_key in ["response", "message", "item", "interaction"] {
         if let Some(nested) = response.get(nested_key) {
-            if let Some(usage) = resolve_usage_value(nested, family) {
+            if let Some(usage) = resolve_usage_value(nested, api_format) {
                 return Some(usage);
             }
         }
@@ -352,7 +348,7 @@ fn resolve_usage_value<'a>(
 
     if let Some(chunks) = response.get("chunks").and_then(serde_json::Value::as_array) {
         for chunk in chunks.iter().rev() {
-            if let Some(usage) = resolve_usage_value(chunk, family) {
+            if let Some(usage) = resolve_usage_value(chunk, api_format) {
                 return Some(usage);
             }
         }

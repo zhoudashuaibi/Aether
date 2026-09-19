@@ -6614,10 +6614,20 @@ mod tests {
             let context = payload.report_context.as_mut().unwrap();
             context["client_api_format"] = json!(format);
             context["provider_api_format"] = json!(format);
+            let seed = build_sync_terminal_usage_seed(
+                build_terminal_usage_context_seed(&plan, payload.report_context.as_ref()),
+                build_sync_terminal_usage_payload_seed(&payload),
+            );
+            assert_eq!(
+                seed.standardized_usage.as_ref().unwrap().input_tokens,
+                input as i64,
+                "{format}"
+            );
             let event =
                 build_sync_terminal_usage_event(&plan, payload.report_context.as_ref(), &payload)
                     .expect("usage event");
-            assert_eq!(event.data.input_tokens, Some(input), "{format}");
+            // Event fields omit zero values; the typed seed above must retain real zero input.
+            assert_eq!(event.data.input_tokens.unwrap_or(0), input, "{format}");
             assert_eq!(
                 event.data.cache_read_input_tokens.unwrap_or(0),
                 read,
