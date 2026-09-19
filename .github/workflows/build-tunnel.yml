@@ -209,7 +209,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           VERSION="${TAG#tunnel-v}"
-          BASE="https://github.com/fawney19/Aether/releases/download/${TAG}"
+          BASE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
 
           if [ -d apps/aether-tunnel ]; then
             TUNNEL_DIR="apps/aether-tunnel"
