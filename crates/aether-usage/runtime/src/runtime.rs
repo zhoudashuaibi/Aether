@@ -6726,6 +6726,7 @@ mod tests {
         (
             build_terminal_usage_context_seed(&plan, None),
             SyncTerminalUsagePayloadSeed {
+                simulated_cache_policy: None,
                 report_kind: "sync_completed".to_string(),
                 status_code: 200,
                 response_time_ms: Some(12),

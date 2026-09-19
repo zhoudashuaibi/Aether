@@ -189,7 +189,18 @@ fn base_mapping(api_format: &str) -> BTreeMap<String, String> {
                 "reasoning_tokens".to_string(),
             );
         }
-        "gemini" => {
+        "gemini" | "google" if api_kind(api_format) == "interactions" => {
+            for (source, target) in [
+                ("total_input_tokens", "input_tokens"),
+                ("total_cached_tokens", "cache_read_tokens"),
+                ("total_output_tokens", "output_tokens"),
+                ("total_thought_tokens", "reasoning_tokens"),
+                ("total_tool_use_tokens", "tool_use_tokens"),
+            ] {
+                mapping.insert(source.to_string(), target.to_string());
+            }
+        }
+        "gemini" | "google" => {
             mapping.insert("promptTokenCount".to_string(), "input_tokens".to_string());
             mapping.insert(
                 "candidatesTokenCount".to_string(),
@@ -276,7 +287,9 @@ fn copy_explicit_total_tokens(
     usage: &mut StandardizedUsage,
 ) {
     let total_tokens = match api_family(api_format).as_str() {
-        "gemini" => numeric_i64(raw_usage.get("totalTokenCount")),
+        "gemini" | "google" if api_kind(api_format) != "interactions" => {
+            numeric_i64(raw_usage.get("totalTokenCount"))
+        }
         _ => numeric_i64(raw_usage.get("total_tokens")),
     };
     if let Some(total_tokens) = total_tokens.filter(|value| *value > 0) {
@@ -307,7 +320,10 @@ fn resolve_usage_value<'a>(
     family: &str,
 ) -> Option<&'a serde_json::Value> {
     match family {
-        "gemini" => {
+        "gemini" | "google" => {
+            if let Some(usage) = response.get("usage") {
+                return Some(usage);
+            }
             if let Some(usage) = response.get("usageMetadata") {
                 return Some(usage);
             }
@@ -326,7 +342,7 @@ fn resolve_usage_value<'a>(
         }
     }
 
-    for nested_key in ["response", "message", "item"] {
+    for nested_key in ["response", "message", "item", "interaction"] {
         if let Some(nested) = response.get(nested_key) {
             if let Some(usage) = resolve_usage_value(nested, family) {
                 return Some(usage);
@@ -347,6 +363,26 @@ fn resolve_usage_value<'a>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn maps_native_gemini_interactions_response_and_terminal_event() {
+        let body = serde_json::json!({"usage":{
+            "total_input_tokens":1000,"total_cached_tokens":500,"total_output_tokens":20,
+            "total_thought_tokens":7,"total_tool_use_tokens":3,"total_tokens":1030
+        }});
+        for response in [
+            body.clone(),
+            serde_json::json!({"event_type":"interaction.completed","interaction":body}),
+        ] {
+            let usage = super::map_usage_from_response(&response, "gemini:interactions");
+            assert_eq!(usage.input_tokens, 1000);
+            assert_eq!(usage.cache_read_tokens, 500);
+            assert_eq!(usage.output_tokens, 20);
+            assert_eq!(usage.reasoning_tokens, 7);
+            assert_eq!(usage.dimensions["tool_use_tokens"], 3);
+            assert_eq!(usage.dimensions["total_tokens"], 1030);
+        }
+    }
+
     use super::{map_usage, map_usage_from_response};
 
     #[test]

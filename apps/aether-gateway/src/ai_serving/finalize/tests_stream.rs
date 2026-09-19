@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::ai_serving::maybe_bridge_standard_sync_json_to_stream;
 
-use super::{apply_simulated_cache_usage_to_openai_body, maybe_build_local_stream_rewriter};
+use super::{apply_simulated_cache_usage_to_body, maybe_build_local_stream_rewriter};
 
 fn utf8(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).expect("utf8 should decode")
@@ -115,7 +115,7 @@ fn simulated_cache_sync_response_is_unchanged_without_simulated_cache() {
         }
     });
 
-    assert!(!apply_simulated_cache_usage_to_openai_body(
+    assert!(!apply_simulated_cache_usage_to_body(
         &mut response,
         "openai:responses",
         Some(&report_context),
@@ -139,7 +139,7 @@ fn simulated_cache_sync_chat_response_rewrite_uses_prompt_tokens_details() {
         }
     });
 
-    assert!(apply_simulated_cache_usage_to_openai_body(
+    assert!(apply_simulated_cache_usage_to_body(
         &mut response,
         "openai:chat",
         Some(&report_context),
@@ -167,7 +167,7 @@ fn simulated_cache_sync_response_rewrite_preserves_gross_input_tokens() {
         }
     });
 
-    assert!(apply_simulated_cache_usage_to_openai_body(
+    assert!(apply_simulated_cache_usage_to_body(
         &mut response,
         "openai:responses",
         Some(&report_context),

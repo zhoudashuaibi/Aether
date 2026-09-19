@@ -40,7 +40,7 @@ use crate::handlers::proxy::websocket::transport::{
     close_client_socket, send_client_message, send_gateway_error_with_status,
     send_responses_websocket_error, upstream_message_to_client,
 };
-use crate::AppState;
+use crate::{AppState, GatewayError};
 
 const LOG_TARGET: &str = "aether_gateway::handlers::proxy::responses_ws";
 const CONTINUATION_REGISTRATION_TIMEOUT: Duration = Duration::from_millis(500);
@@ -580,15 +580,20 @@ pub(super) async fn relay_bound_connection(
                 match relay_directive {
                     _ if !client_connected => {}
                     Some(ResponsesWebSocketRelayDirective::ForwardOriginal) => {
-                        let client_frame = match parsed_upstream_frame.as_ref().map(|frame| {
-                            bound
-                                .redaction_restorer
-                                .restore_provider_frame_text(frame.event())
-                        }) {
-                            Some(Ok(Some(text))) => Some(AxumWsMessage::Text(text.into())),
-                            Some(Ok(None)) | None => {
-                                Some(upstream_message_to_client(upstream_message.clone()))
+                        let mut client_event = parsed_upstream_frame.as_ref().map(|frame| frame.event().clone());
+                        let usage_changed = client_event.as_mut().is_some_and(|event| {
+                            bound.turn_state.attempt_mut().is_some_and(|turn| turn.rewrite_client_usage(event))
+                        });
+                        let encoded = client_event.as_ref().map(|event| {
+                            match bound.redaction_restorer.restore_provider_frame_text(event)? {
+                                Some(text) => Ok(Some(text)),
+                                None if usage_changed => encode_opaque_websocket_event(event).map(Some).map_err(|_| GatewayError::Internal("failed to serialize Responses WebSocket usage".into())),
+                                None => Ok(None),
                             }
+                        });
+                        let client_frame = match encoded {
+                            Some(Ok(Some(text))) => Some(AxumWsMessage::Text(text.into())),
+                            Some(Ok(None)) | None => Some(upstream_message_to_client(upstream_message.clone())),
                             Some(Err(_)) => {
                                 relay_serialization_failed = true;
                                 None
@@ -597,11 +602,8 @@ pub(super) async fn relay_bound_connection(
                         if let Some(client_frame) = client_frame {
                             match send_client_message(client_socket, client_frame).await {
                                 Ok(()) => {
-                                    if let (Some(turn), Some(frame)) = (
-                                        bound.turn_state.attempt_mut(),
-                                        parsed_upstream_frame.as_ref(),
-                                    ) {
-                                        turn.capture_client_frame(frame.event());
+                                    if let (Some(turn), Some(event)) = (bound.turn_state.attempt_mut(), client_event.as_ref()) {
+                                        turn.capture_client_frame(event);
                                     }
                                 }
                                 Err(error) => relay_send_error = Some(error),
@@ -610,12 +612,13 @@ pub(super) async fn relay_bound_connection(
                     }
                     Some(ResponsesWebSocketRelayDirective::ForwardEvents(events)) => {
                         for event in events {
-                            let text = match bound
-                                .redaction_restorer
-                                .restore_provider_frame_text(event)
-                            {
+                            let mut event = event.clone();
+                            if let Some(turn) = bound.turn_state.attempt_mut() {
+                                turn.rewrite_client_usage(&mut event);
+                            }
+                            let text = match bound.redaction_restorer.restore_provider_frame_text(&event) {
                                 Ok(Some(restored)) => restored,
-                                Ok(None) => match encode_opaque_websocket_event(event) {
+                                Ok(None) => match encode_opaque_websocket_event(&event) {
                                     Ok(encoded) => encoded,
                                     Err(_) => {
                                         relay_serialization_failed = true;
@@ -627,15 +630,10 @@ pub(super) async fn relay_bound_connection(
                                     break;
                                 }
                             };
-                            match send_client_message(
-                                client_socket,
-                                AxumWsMessage::Text(text.into()),
-                            )
-                            .await
-                            {
+                            match send_client_message(client_socket, AxumWsMessage::Text(text.into())).await {
                                 Ok(()) => {
                                     if let Some(turn) = bound.turn_state.attempt_mut() {
-                                        turn.capture_client_frame(event);
+                                        turn.capture_client_frame(&event);
                                     }
                                 }
                                 Err(error) => {

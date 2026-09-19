@@ -1,4 +1,4 @@
-use crate::ai_serving::api::apply_simulated_cache_usage_to_openai_body;
+use crate::ai_serving::api::apply_simulated_cache_usage_to_body;
 use crate::ai_serving::GatewayControlDecision;
 use crate::ai_serving::{build_generated_tool_call_id, canonicalize_tool_arguments};
 use crate::{usage::GatewaySyncReportRequest, GatewayError};
@@ -68,7 +68,7 @@ pub(crate) fn maybe_build_local_core_sync_finalize_response(
                 .get("client_api_format")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
-            apply_simulated_cache_usage_to_openai_body(
+            apply_simulated_cache_usage_to_body(
                 &mut body_json,
                 client_api_format,
                 Some(report_context),
@@ -88,7 +88,7 @@ pub(crate) fn maybe_build_local_core_sync_finalize_response(
                 .get("client_api_format")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
-            apply_simulated_cache_usage_to_openai_body(
+            apply_simulated_cache_usage_to_body(
                 &mut client_body_json,
                 client_api_format,
                 Some(report_context),

@@ -78,6 +78,51 @@ const RECEIVE_TIMEOUT: Duration = Duration::from_secs(15);
 // Tests
 // ---------------------------------------------------------------------------
 
+/// Client usage and the settled row must use the same real input count, including continuations.
+#[tokio::test]
+async fn simulated_cache_websocket_usage_matches_billing_with_pii_enabled() -> Result<(), BoxError>
+{
+    let harness = Harness::start_with(
+        UpstreamBehavior::CompleteEveryTurn,
+        ProviderFixture::SimulatedCacheOpenAiKey,
+        PiiRedaction::Enabled,
+    )
+    .await?;
+    let mut client = harness.connect().await?;
+    for turn in 1..=2 {
+        let mut request = json!({"input": format!("contact user@example.com {}", "long estimated prompt ".repeat(100))});
+        if turn == 2 {
+            request["previous_response_id"] = json!("resp-e2e-1");
+        }
+        client.send(response_create(request)).await?;
+        let event = receive_event(&mut client, "response.completed").await?;
+        assert_eq!(
+            event
+                .pointer("/response/usage/input_tokens")
+                .and_then(Value::as_u64),
+            Some(INPUT_TOKENS)
+        );
+        assert_eq!(
+            event
+                .pointer("/response/usage/input_tokens_details/cached_tokens")
+                .and_then(Value::as_u64),
+            Some(INPUT_TOKENS / 2)
+        );
+    }
+    let audits = harness
+        .usage_audits_where(2, "simulated cache billed turns", |audit| {
+            is_billed(audit) && audit.cache_read_input_tokens == INPUT_TOKENS / 2
+        })
+        .await?;
+    for audit in audits {
+        assert_eq!(audit.input_tokens, INPUT_TOKENS);
+        assert_eq!(audit.cache_read_input_tokens, INPUT_TOKENS / 2);
+        assert_eq!(audit.output_tokens, OUTPUT_TOKENS);
+        assert_eq!(audit.total_tokens, INPUT_TOKENS + OUTPUT_TOKENS);
+    }
+    Ok(())
+}
+
 /// The headline guarantee: a continuation stays on one physical upstream socket,
 /// and both turns are billed independently.
 #[tokio::test]
@@ -841,6 +886,7 @@ struct Harness {
 enum ProviderFixture {
     /// 单个 openai 类型供应商、单把 key。
     SingleOpenAiKey,
+    SimulatedCacheOpenAiKey,
     /// codex 类型供应商 + 两把 key：第一把配额耗尽后重试落到第二把。
     CodexKeyPair,
 }
@@ -848,7 +894,7 @@ enum ProviderFixture {
 impl ProviderFixture {
     const fn provider_type(self) -> &'static str {
         match self {
-            Self::SingleOpenAiKey => "openai",
+            Self::SingleOpenAiKey | Self::SimulatedCacheOpenAiKey => "openai",
             Self::CodexKeyPair => "codex",
         }
     }
@@ -1539,6 +1585,11 @@ async fn prepare_and_seed_database(
     }
 
     seed_provider_catalog(&backends, upstream_base_url, fixture).await?;
+    if fixture == ProviderFixture::SimulatedCacheOpenAiKey {
+        backends
+            .upsert_system_config_entry("module.simulated_cache.enabled", &json!(true), None)
+            .await?;
+    }
     seed_models(&backends).await?;
     let user_id = seed_user(&backends).await?;
     seed_client_api_key(&backends, &user_id).await?;
@@ -1589,7 +1640,9 @@ async fn seed_provider_catalog(
                 None,
                 Some(30.0),
                 Some(10.0),
-                Some(json!({"responses_websocket": {"enabled": true}})),
+                Some(if fixture == ProviderFixture::SimulatedCacheOpenAiKey {
+                    json!({"responses_websocket":{"enabled":true}, "simulated_cache":{"enabled":true,"min_hit_percentage":50,"max_hit_percentage":50}})
+                } else { json!({"responses_websocket": {"enabled": true}}) }),
             ),
             None,
         )

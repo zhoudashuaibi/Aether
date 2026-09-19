@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-pub(crate) use crate::ai_serving::api::apply_simulated_cache_usage_to_openai_body;
+pub(crate) use crate::ai_serving::api::apply_simulated_cache_usage_to_body;
 
 use crate::ai_serving::api::SimulatedCacheUsageStreamRewriter;
 use crate::ai_serving::{

@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 
+use aether_ai_formats::formats::shared::simulated_cache::{
+    response_gross_input_tokens, standardized_gross_input_tokens, SimulatedCachePolicy,
+};
 use aether_ai_formats::UPSTREAM_IS_STREAM_KEY;
 use aether_contracts::{ExecutionPlan, ExecutionTelemetry};
 use aether_data_contracts::repository::usage::{
@@ -155,6 +158,7 @@ pub struct TerminalUsageContextSeed {
 
 #[derive(Debug, Clone)]
 pub struct SyncTerminalUsagePayloadSeed {
+    pub simulated_cache_policy: Option<SimulatedCachePolicy>,
     pub report_kind: String,
     pub status_code: u16,
     pub response_time_ms: Option<u64>,
@@ -936,6 +940,9 @@ pub fn build_sync_terminal_usage_payload_seed(
         .or_else(|| headers_to_json(&payload.headers));
     let standardized_usage = simulated_cache_standardized_usage_from_context(context);
     SyncTerminalUsagePayloadSeed {
+        simulated_cache_policy: SimulatedCachePolicy::from_report_context(
+            payload.report_context.as_ref(),
+        ),
         report_kind: payload.report_kind.clone(),
         status_code: payload.status_code,
         response_time_ms: payload
@@ -1020,6 +1027,7 @@ pub fn build_sync_terminal_usage_seed(
     payload_seed: SyncTerminalUsagePayloadSeed,
 ) -> TerminalUsageSeed {
     let SyncTerminalUsagePayloadSeed {
+        simulated_cache_policy,
         report_kind,
         status_code,
         response_time_ms,
@@ -1036,11 +1044,38 @@ pub fn build_sync_terminal_usage_seed(
     let derived_standardized_usage = provider_response_full
         .as_ref()
         .map(|response| map_usage_from_response(response, context_seed.provider_contract.as_str()));
-    let standardized_usage = merge_standardized_usage_with_context_cache(
-        standardized_usage,
-        derived_standardized_usage,
-        context_seed.provider_contract.as_str(),
-    );
+    let actual_gross_input = provider_response_full.as_ref().and_then(|body| {
+        response_gross_input_tokens(body, context_seed.provider_contract.as_str())
+    });
+    let standardized_usage = if let Some(policy) = simulated_cache_policy {
+        let format = context_seed.provider_contract.as_str();
+        let gross_input = actual_gross_input
+            .or_else(|| {
+                derived_standardized_usage
+                    .as_ref()
+                    .filter(|usage| {
+                        usage.input_tokens > 0
+                            || usage.cache_read_tokens > 0
+                            || usage.cache_creation_tokens > 0
+                    })
+                    .map(|usage| standardized_gross_input_tokens(usage, format))
+            })
+            .or_else(|| {
+                standardized_usage
+                    .as_ref()
+                    .map(|usage| standardized_gross_input_tokens(usage, format))
+            })
+            .unwrap_or(0);
+        let mut usage = derived_standardized_usage.unwrap_or_else(StandardizedUsage::new);
+        policy.apply_to_usage(&mut usage, format, gross_input);
+        Some(usage)
+    } else {
+        merge_standardized_usage_with_context_cache(
+            standardized_usage,
+            derived_standardized_usage,
+            context_seed.provider_contract.as_str(),
+        )
+    };
     let terminal_state = infer_sync_terminal_state(
         report_kind.as_str(),
         status_code,
@@ -1110,11 +1145,15 @@ fn merge_standardized_usage_with_context_cache(
     let mut usage = derived_usage.unwrap_or_default();
     let cache_creation_tokens = context_usage.cache_creation_tokens.max(0);
     let cache_read_tokens = context_usage.cache_read_tokens.max(0);
-    let context_total_input = context_usage
-        .input_tokens
-        .max(0)
-        .saturating_add(cache_creation_tokens)
-        .saturating_add(cache_read_tokens);
+    let context_total_input = if api_format_reports_gross_input_tokens(provider_contract) {
+        context_usage.input_tokens.max(0)
+    } else {
+        context_usage
+            .input_tokens
+            .max(0)
+            .saturating_add(cache_creation_tokens)
+            .saturating_add(cache_read_tokens)
+    };
     let total_input = usage.input_tokens.max(0).max(context_total_input);
     usage.input_tokens = if api_format_reports_gross_input_tokens(provider_contract) {
         total_input
@@ -6505,16 +6544,17 @@ mod tests {
                 "provider_api_format": "openai:responses",
                 "provider_name": "OpenAI",
                 "model": "gpt-5",
-                "input_tokens": 1800,
+                "input_tokens": 1000,
                 "simulated_cache_enabled": true,
-                "cache_read_input_tokens": 300,
+                "cache_read_input_tokens": 1000,
+                "simulated_cache_hit_basis_points": 5000,
             })),
             status_code: 200,
             headers: BTreeMap::new(),
             body_json: Some(json!({
                 "id": "openai-sync-response-1",
                 "usage": {
-                    "input_tokens": 2200,
+                    "input_tokens": 1000,
                     "output_tokens": 100
                 }
             })),
@@ -6528,11 +6568,63 @@ mod tests {
                 .expect("usage event should build");
 
         assert_eq!(event.event_type, UsageEventType::Completed);
-        assert_eq!(event.data.input_tokens, Some(2200));
+        assert_eq!(event.data.input_tokens, Some(1000));
         assert_eq!(event.data.output_tokens, Some(100));
         assert_eq!(event.data.cache_creation_input_tokens, None);
-        assert_eq!(event.data.cache_read_input_tokens, Some(300));
-        assert_eq!(event.data.total_tokens, Some(2300));
+        assert_eq!(event.data.cache_read_input_tokens, Some(500));
+        assert_eq!(event.data.total_tokens, Some(1100));
+
+        for (format, body, input, read) in [
+            (
+                "openai:responses",
+                json!({"usage":{"input_tokens":300,"output_tokens":100}}),
+                300,
+                150,
+            ),
+            (
+                "openai:responses",
+                json!({"usage":{"input_tokens":0,"output_tokens":100}}),
+                0,
+                0,
+            ),
+            (
+                "claude:messages",
+                json!({"usage":{"input_tokens":100,"cache_read_input_tokens":100,"cache_creation_input_tokens":100,"output_tokens":100}}),
+                150,
+                150,
+            ),
+            (
+                "gemini:generate_content",
+                json!({"usageMetadata":{"promptTokenCount":300,"candidatesTokenCount":100}}),
+                300,
+                150,
+            ),
+            (
+                "gemini:interactions",
+                json!({"usage":{"total_input_tokens":300,"total_output_tokens":100}}),
+                300,
+                150,
+            ),
+        ] {
+            let mut plan = plan.clone();
+            plan.client_api_format = format.to_string();
+            plan.provider_api_format = format.to_string();
+            let mut payload = payload.clone();
+            payload.body_json = Some(body);
+            let context = payload.report_context.as_mut().unwrap();
+            context["client_api_format"] = json!(format);
+            context["provider_api_format"] = json!(format);
+            let event =
+                build_sync_terminal_usage_event(&plan, payload.report_context.as_ref(), &payload)
+                    .expect("usage event");
+            assert_eq!(event.data.input_tokens, Some(input), "{format}");
+            assert_eq!(
+                event.data.cache_read_input_tokens.unwrap_or(0),
+                read,
+                "{format}"
+            );
+            assert_eq!(event.data.output_tokens, Some(100));
+        }
     }
 
     #[test]

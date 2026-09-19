@@ -42,14 +42,8 @@ pub(crate) enum SimulatedCacheMode {
 }
 
 impl SimulatedCacheConfig {
-    pub(crate) fn cache_read_tokens(self, input_tokens: u64) -> u64 {
-        if input_tokens == 0 {
-            return 0;
-        }
-        let basis_points =
-            random_basis_points(self.min_hit_basis_points, self.max_hit_basis_points);
-        input_tokens.saturating_mul(u64::from(basis_points))
-            / u64::from(MAX_PERCENTAGE_BASIS_POINTS)
+    fn select_basis_points(self) -> u32 {
+        random_basis_points(self.min_hit_basis_points, self.max_hit_basis_points)
     }
 }
 
@@ -135,6 +129,9 @@ pub(crate) fn seed_simulated_cache_config_in_report_context(
         return;
     };
     for key in [
+        "simulated_cache_hit_basis_points",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
         SIMULATED_CACHE_ENABLED_CONTEXT_FIELD,
         SIMULATED_CACHE_MIN_HIT_BPS_CONTEXT_FIELD,
         SIMULATED_CACHE_MAX_HIT_BPS_CONTEXT_FIELD,
@@ -144,6 +141,10 @@ pub(crate) fn seed_simulated_cache_config_in_report_context(
     let Some(config) = config else {
         return;
     };
+    context.insert(
+        "simulated_cache_hit_basis_points".to_string(),
+        Value::from(config.select_basis_points()),
+    );
     context.insert(
         SIMULATED_CACHE_ENABLED_CONTEXT_FIELD.to_string(),
         Value::Bool(true),

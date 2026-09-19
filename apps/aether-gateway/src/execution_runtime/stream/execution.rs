@@ -1,3 +1,8 @@
+use crate::execution_runtime::simulated_cache::{
+    seed_report_context_input_tokens as seed_stream_report_context_input_tokens,
+    seed_report_context_simulated_cache_usage as seed_stream_report_context_simulated_cache_usage,
+    seed_simulated_cache_config as seed_stream_simulated_cache_config,
+};
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::io::Error as IoError;
@@ -87,10 +92,8 @@ use crate::execution_runtime::build_direct_execution_frame_stream;
 use crate::execution_runtime::chatgpt_web_image::maybe_execute_chatgpt_web_image_stream;
 use crate::execution_runtime::grok::maybe_execute_grok_stream;
 use crate::execution_runtime::kiro_cache::{
-    estimate_simulated_cache_input_tokens, kiro_simulated_cache_enabled_from_report_context,
-    seed_legacy_kiro_prompt_cache_usage, seed_simulated_cache_mode_in_report_context,
-    simulated_cache_config_from_report_context, simulated_cache_mode_from_provider_config,
-    SimulatedCacheMode, SIMULATED_CACHE_MODULE_ENABLED_KEY,
+    kiro_simulated_cache_enabled_from_report_context, seed_legacy_kiro_prompt_cache_usage,
+    simulated_cache_config_from_report_context,
 };
 use crate::execution_runtime::kiro_web_search::maybe_execute_kiro_web_search_stream;
 use crate::execution_runtime::oauth_retry::refresh_oauth_plan_auth_for_retry;
@@ -753,107 +756,6 @@ fn build_stream_usage_payload(
     }
 }
 
-fn seed_stream_report_context_input_tokens(
-    _plan: &ExecutionPlan,
-    report_context: &mut Option<Value>,
-) {
-    let Some(context) = report_context.as_mut().and_then(Value::as_object_mut) else {
-        return;
-    };
-    if context
-        .get("input_tokens")
-        .and_then(Value::as_u64)
-        .is_some_and(|input_tokens| input_tokens > 0)
-    {
-        return;
-    }
-    let Some(original_request_body) = context.get("original_request_body").cloned() else {
-        return;
-    };
-    let input_tokens = estimate_simulated_cache_input_tokens(&original_request_body);
-    context.insert("input_tokens".to_string(), Value::from(input_tokens));
-}
-
-async fn seed_stream_simulated_cache_config(
-    state: &AppState,
-    plan: &ExecutionPlan,
-    report_context: &mut Option<Value>,
-) {
-    let module_enabled = match state
-        .read_system_config_json_value(SIMULATED_CACHE_MODULE_ENABLED_KEY)
-        .await
-    {
-        Ok(value) => value.as_ref().and_then(Value::as_bool).unwrap_or(false),
-        Err(_err) => {
-            warn!(
-                event_name = "simulated_cache_module_config_read_failed",
-                log_type = "event",
-                request_id = %plan.request_id,
-                provider_id = %plan.provider_id,
-                error_category = "system_config_read_failed",
-                "failed to read simulated cache module config; defaulting disabled"
-            );
-            false
-        }
-    };
-    let allow_legacy_kiro = plan
-        .provider_name
-        .as_deref()
-        .is_some_and(|name| name.eq_ignore_ascii_case("kiro"));
-    let mode = if module_enabled || allow_legacy_kiro {
-        match state
-            .read_provider_catalog_providers_by_ids(std::slice::from_ref(&plan.provider_id))
-            .await
-        {
-            Ok(providers) => providers
-                .iter()
-                .find(|provider| provider.id == plan.provider_id)
-                .map(|provider| {
-                    simulated_cache_mode_from_provider_config(
-                        provider.provider_type.as_str(),
-                        provider.config.as_ref(),
-                        module_enabled,
-                        allow_legacy_kiro,
-                    )
-                })
-                .unwrap_or(SimulatedCacheMode::Disabled),
-            Err(err) => {
-                warn!(
-                    event_name = "simulated_cache_provider_config_read_failed",
-                    log_type = "event",
-                    request_id = %plan.request_id,
-                    provider_id = %plan.provider_id,
-                    error = ?err,
-                    "failed to read simulated cache provider config; defaulting disabled"
-                );
-                SimulatedCacheMode::Disabled
-            }
-        }
-    } else {
-        SimulatedCacheMode::Disabled
-    };
-    seed_simulated_cache_mode_in_report_context(report_context, mode);
-}
-
-fn seed_stream_report_context_simulated_cache_usage(report_context: &mut Option<Value>) {
-    let Some(config) = simulated_cache_config_from_report_context(report_context.as_ref()) else {
-        return;
-    };
-    let Some(context) = report_context.as_mut().and_then(Value::as_object_mut) else {
-        return;
-    };
-    if context.contains_key("cache_read_input_tokens") {
-        return;
-    }
-    let Some(input_tokens) = context.get("input_tokens").and_then(Value::as_u64) else {
-        return;
-    };
-    context.insert(
-        "cache_read_input_tokens".to_string(),
-        Value::from(config.cache_read_tokens(input_tokens)),
-    );
-}
-
 async fn maybe_apply_simulated_cache_usage_to_stream_summary(
     _state: &AppState,
     plan: &ExecutionPlan,
@@ -891,58 +793,16 @@ async fn maybe_apply_simulated_cache_usage_to_stream_summary(
         return;
     }
 
-    let Some(config) = simulated_cache_config_from_report_context(Some(report_context)) else {
-        return;
-    };
-    let summary = summary.get_or_insert_with(ExecutionStreamTerminalSummary::default);
-    let usage = summary
-        .standardized_usage
-        .get_or_insert_with(StandardizedUsage::new);
-    // Simulated cache is applied against the gross prompt size (estimated from the original
-    // request body and seeded into the report context). OpenAI/Gemini report gross input with
-    // cache reads as a subset; Claude reports fresh input separately from cache reads.
-    let actual_input_tokens = usage.input_tokens.max(0) as u64;
-    let total_input_tokens = actual_input_tokens.max(
-        report_context
-            .get("input_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-    );
-    if total_input_tokens == 0 {
+    if crate::ai_serving::api::SimulatedCachePolicy::from_report_context(Some(report_context))
+        .is_none()
+    {
         return;
     }
-    // The report context holds the single source of truth computed once while seeding, so
-    // reuse it instead of re-randomizing: otherwise the stream payload, the persisted usage
-    // event, and admin stats would each report a different cache hit for the same request.
-    // Only simulate when no value was seeded upstream.
-    let cache_read_tokens = report_context
-        .get("cache_read_input_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or_else(|| config.cache_read_tokens(total_input_tokens))
-        .min(total_input_tokens);
-    usage.input_tokens =
-        if simulated_cache_reports_gross_input_tokens(plan.provider_api_format.as_str()) {
-            total_input_tokens
-        } else {
-            total_input_tokens.saturating_sub(cache_read_tokens)
-        } as i64;
-    usage.cache_creation_tokens = 0;
-    usage.cache_creation_ephemeral_5m_tokens = 0;
-    usage.cache_creation_ephemeral_1h_tokens = 0;
-    usage.cache_read_tokens = cache_read_tokens as i64;
-}
-
-fn simulated_cache_reports_gross_input_tokens(api_format: &str) -> bool {
-    matches!(
-        api_format
-            .split(':')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "openai" | "gemini" | "google"
-    )
+    crate::execution_runtime::simulated_cache::apply_simulated_cache_to_summary(
+        plan.provider_api_format.as_str(),
+        Some(report_context),
+        summary.get_or_insert_with(ExecutionStreamTerminalSummary::default),
+    );
 }
 
 fn append_stream_capture_bytes(
@@ -2824,14 +2684,10 @@ async fn record_stream_pending_lifecycle(
 
 fn should_seed_stream_simulated_cache_config_before_upstream(
     plan: &ExecutionPlan,
-    plan_kind: &str,
+    _plan_kind: &str,
 ) -> bool {
-    plan_kind == OPENAI_CHAT_STREAM_PLAN_KIND
-        && !is_openai_responses_family_format(plan.provider_api_format.as_str())
-        && !is_openai_responses_family_format(plan.client_api_format.as_str())
-        && plan
-            .provider_api_format
-            .eq_ignore_ascii_case(plan.client_api_format.as_str())
+    crate::ai_serving::api::supports_simulated_cache(plan.client_api_format.as_str())
+        && crate::ai_serving::api::supports_simulated_cache(plan.provider_api_format.as_str())
 }
 
 fn should_defer_stream_pending_for_direct_inline(
@@ -12236,7 +12092,7 @@ mod tests {
             .as_ref()
             .and_then(|summary| summary.standardized_usage.as_ref())
             .expect("usage should exist");
-        assert_eq!(usage.input_tokens, 1_155);
+        assert_eq!(usage.input_tokens, 1_166);
         assert_eq!(usage.cache_read_tokens, 845);
         assert_eq!(usage.cache_creation_tokens, 0);
         assert_eq!(usage.output_tokens, 19);
@@ -13201,7 +13057,7 @@ mod tests {
     }
 
     #[test]
-    fn seeds_simulated_cache_config_before_same_format_openai_chat_upstream() {
+    fn seeds_simulated_cache_config_before_all_text_upstream_paths() {
         let mut plan = direct_stream_test_plan(
             "simulated-cache-early-seed",
             "https://example.com/v1/chat/completions".to_string(),
@@ -13214,14 +13070,14 @@ mod tests {
         ));
 
         plan.provider_api_format = "openai:responses".to_string();
-        assert!(!should_seed_stream_simulated_cache_config_before_upstream(
+        assert!(should_seed_stream_simulated_cache_config_before_upstream(
             &plan,
             OPENAI_CHAT_STREAM_PLAN_KIND,
         ));
 
         plan.provider_api_format = "openai:chat".to_string();
         plan.client_api_format = "claude:messages".to_string();
-        assert!(!should_seed_stream_simulated_cache_config_before_upstream(
+        assert!(should_seed_stream_simulated_cache_config_before_upstream(
             &plan,
             OPENAI_CHAT_STREAM_PLAN_KIND,
         ));

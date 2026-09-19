@@ -566,6 +566,23 @@ pub(super) async fn begin_unowned_responses_websocket_turn(
         }
     };
     let mut report_context = attempt.report_context;
+    // A transparent retry gets a fresh provider policy and a single ratio for this attempt.
+    if let Some(context) = report_context.as_mut().and_then(Value::as_object_mut) {
+        context.remove("simulated_cache_provider_scope");
+    }
+    crate::execution_runtime::simulated_cache::seed_simulated_cache_config(
+        state,
+        &plan,
+        &mut report_context,
+    )
+    .await;
+    crate::execution_runtime::simulated_cache::seed_report_context_input_tokens(
+        &plan,
+        &mut report_context,
+    );
+    crate::execution_runtime::simulated_cache::seed_report_context_simulated_cache_usage(
+        &mut report_context,
+    );
 
     let balance_rejection = execution_plan_balance_capacity_rejection(
         state,
@@ -1086,6 +1103,14 @@ impl ResponsesProviderAttempt {
         }
     }
 
+    pub(super) fn rewrite_client_usage(&self, event: &mut Value) -> bool {
+        crate::ai_serving::api::apply_simulated_cache_usage_to_event(
+            event,
+            "openai:responses",
+            self.lifecycle.report_context(),
+        )
+    }
+
     pub(super) fn capture_client_frame(&mut self, event: &Value) {
         self.client_capture
             .append(&websocket_event_as_sse_line(event));
@@ -1175,6 +1200,13 @@ impl ResponsesProviderAttempt {
         });
         let report_context = self.lifecycle.report_context().unwrap_or(&fallback_context);
         let mut summary = self.observer.finish(report_context);
+        if summary.standardized_usage.is_some() || summary.observed_finish {
+            crate::execution_runtime::simulated_cache::apply_simulated_cache_to_summary(
+                "openai:responses",
+                Some(report_context),
+                &mut summary,
+            );
+        }
         if let Some(reason) = facts.forced_error() {
             if summary.parser_error.is_none() {
                 summary.parser_error = Some(reason.to_string());

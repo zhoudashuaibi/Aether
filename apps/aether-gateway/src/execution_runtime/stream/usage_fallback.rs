@@ -310,6 +310,8 @@ struct UsageEnvelope {
     message: Option<Box<UsageEnvelope>>,
     #[serde(deserialize_with = "deserialize_nested_usage")]
     item: Option<Box<UsageEnvelope>>,
+    #[serde(deserialize_with = "deserialize_nested_usage")]
+    interaction: Option<Box<UsageEnvelope>>,
     #[serde(deserialize_with = "deserialize_usage_array")]
     candidates: Option<Vec<UsageEnvelope>>,
     #[serde(deserialize_with = "deserialize_usage_array")]
@@ -517,7 +519,7 @@ impl UsageEnvelope {
             && self.usage_metadata.is_none()
             && self.service_tier.is_none()
             && self.speed.is_none()
-            && [&self.response, &self.message, &self.item]
+            && [&self.response, &self.message, &self.item, &self.interaction]
                 .into_iter()
                 .all(|value| value.as_ref().is_none_or(|value| value.is_empty()))
             && [&self.candidates, &self.chunks].into_iter().all(|values| {
@@ -546,6 +548,7 @@ impl UsageEnvelope {
             ("response", self.response),
             ("message", self.message),
             ("item", self.item),
+            ("interaction", self.interaction),
         ] {
             if let Some(value) = value {
                 object.insert(key.to_string(), value.into_value());
@@ -569,7 +572,7 @@ fn contains_explicit_usage(value: &Value) -> bool {
             .get(key)
             .and_then(Value::as_object)
             .is_some_and(|value| !value.is_empty())
-    }) || ["response", "message", "item"]
+    }) || ["response", "message", "item", "interaction"]
         .into_iter()
         .any(|key| value.get(key).is_some_and(contains_explicit_usage))
         || ["candidates", "chunks"].into_iter().any(|key| {
@@ -583,6 +586,20 @@ fn contains_explicit_usage(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observes_native_interactions_usage_across_chunk_boundaries() {
+        let context = serde_json::json!({"provider_api_format":"gemini:interactions"});
+        let mut observer = StreamUsageFallback::new(64 * 1024);
+        let event=b"event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"usage\":{\"total_input_tokens\":1000,\"total_cached_tokens\":500,\"total_output_tokens\":20}}}\n\n";
+        for chunk in event.chunks(11) {
+            observer.observe(&context, chunk);
+        }
+        let usage = observer.finish(&context).expect("Interactions usage");
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.cache_read_tokens, 500);
+        assert_eq!(usage.output_tokens, 20);
+    }
     use serde_json::json;
 
     #[test]

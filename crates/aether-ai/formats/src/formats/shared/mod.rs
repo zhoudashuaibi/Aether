@@ -16,6 +16,7 @@ pub mod request;
 pub mod request_matrix;
 pub mod response;
 pub mod routing;
+pub mod simulated_cache;
 pub mod sse;
 pub mod standard_matrix;
 pub mod standard_normalize;

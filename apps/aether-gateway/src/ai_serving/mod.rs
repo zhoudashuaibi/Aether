@@ -20,7 +20,7 @@ pub(crate) use self::api::{
 };
 pub(crate) use self::finalize::common::LocalCoreSyncFinalizeOutcome;
 pub(crate) use self::finalize::internal::{
-    apply_simulated_cache_usage_to_openai_body, maybe_bridge_standard_sync_json_to_stream,
+    apply_simulated_cache_usage_to_body, maybe_bridge_standard_sync_json_to_stream,
     maybe_build_stream_response_rewriter, maybe_build_sync_finalize_outcome,
     maybe_compile_sync_finalize_response, SyncToStreamBridgeOutcome,
 };

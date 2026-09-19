@@ -1,3 +1,8 @@
+use crate::execution_runtime::simulated_cache::{
+    seed_report_context_input_tokens as seed_sync_report_context_input_tokens,
+    seed_report_context_simulated_cache_usage as seed_sync_report_context_simulated_cache_usage,
+    seed_simulated_cache_config as seed_sync_simulated_cache_config,
+};
 use std::collections::BTreeMap;
 use std::io::Error as IoError;
 use std::sync::Arc;
@@ -34,7 +39,7 @@ use crate::ai_serving::api::{
     implicit_sync_finalize_report_kind, maybe_build_sync_finalize_outcome, LocalCoreSyncErrorKind,
     LocalCoreSyncFinalizeOutcome,
 };
-use crate::ai_serving::apply_simulated_cache_usage_to_openai_body;
+use crate::ai_serving::apply_simulated_cache_usage_to_body;
 use crate::ai_serving::record_local_runtime_candidate_skip_reason;
 use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
@@ -45,10 +50,8 @@ use crate::control::GatewayControlDecision;
 use crate::execution_runtime::chatgpt_web_image::maybe_execute_chatgpt_web_image_sync;
 use crate::execution_runtime::grok::maybe_execute_grok_sync;
 use crate::execution_runtime::kiro_cache::{
-    estimate_simulated_cache_input_tokens, kiro_simulated_cache_enabled_from_report_context,
-    seed_legacy_kiro_prompt_cache_usage, seed_simulated_cache_mode_in_report_context,
-    simulated_cache_config_from_report_context, simulated_cache_mode_from_provider_config,
-    SimulatedCacheMode, SIMULATED_CACHE_MODULE_ENABLED_KEY,
+    kiro_simulated_cache_enabled_from_report_context, seed_legacy_kiro_prompt_cache_usage,
+    simulated_cache_config_from_report_context,
 };
 use crate::execution_runtime::oauth_retry::refresh_oauth_plan_auth_for_retry;
 #[cfg(test)]
@@ -702,109 +705,6 @@ fn build_sync_report_payload(
         body_base64,
         telemetry,
     }
-}
-
-fn seed_sync_report_context_input_tokens(
-    _plan: &ExecutionPlan,
-    report_context: &mut Option<Value>,
-) {
-    let Some(context) = report_context.as_mut().and_then(Value::as_object_mut) else {
-        return;
-    };
-    if context
-        .get("input_tokens")
-        .and_then(Value::as_u64)
-        .is_some_and(|input_tokens| input_tokens > 0)
-    {
-        return;
-    }
-
-    let Some(original_request_body) = context.get("original_request_body").cloned() else {
-        return;
-    };
-    let input_tokens = estimate_simulated_cache_input_tokens(&original_request_body);
-    context.insert("input_tokens".to_string(), Value::from(input_tokens));
-}
-
-async fn seed_sync_simulated_cache_config(
-    state: &AppState,
-    plan: &ExecutionPlan,
-    report_context: &mut Option<Value>,
-) {
-    let module_enabled = match state
-        .read_system_config_json_value(SIMULATED_CACHE_MODULE_ENABLED_KEY)
-        .await
-    {
-        Ok(value) => value.as_ref().and_then(Value::as_bool).unwrap_or(false),
-        Err(err) => {
-            warn!(
-                event_name = "simulated_cache_module_config_read_failed",
-                log_type = "event",
-                request_id = %plan.request_id,
-                provider_id = %plan.provider_id,
-                error = ?err,
-                "failed to read simulated cache module config; defaulting disabled"
-            );
-            false
-        }
-    };
-    let allow_legacy_kiro = plan
-        .provider_name
-        .as_deref()
-        .is_some_and(|name| name.eq_ignore_ascii_case("kiro"));
-    let mode = if module_enabled || allow_legacy_kiro {
-        match state
-            .read_provider_catalog_providers_by_ids(std::slice::from_ref(&plan.provider_id))
-            .await
-        {
-            Ok(providers) => providers
-                .iter()
-                .find(|provider| provider.id == plan.provider_id)
-                .map(|provider| {
-                    simulated_cache_mode_from_provider_config(
-                        provider.provider_type.as_str(),
-                        provider.config.as_ref(),
-                        module_enabled,
-                        allow_legacy_kiro,
-                    )
-                })
-                .unwrap_or(SimulatedCacheMode::Disabled),
-            Err(err) => {
-                warn!(
-                    event_name = "simulated_cache_provider_config_read_failed",
-                    log_type = "event",
-                    request_id = %plan.request_id,
-                    provider_id = %plan.provider_id,
-                    error = ?err,
-                    "failed to read simulated cache provider config; defaulting disabled"
-                );
-                SimulatedCacheMode::Disabled
-            }
-        }
-    } else {
-        SimulatedCacheMode::Disabled
-    };
-    seed_simulated_cache_mode_in_report_context(report_context, mode);
-}
-
-fn seed_sync_report_context_simulated_cache_usage(report_context: &mut Option<Value>) {
-    let Some(config) = simulated_cache_config_from_report_context(report_context.as_ref()) else {
-        return;
-    };
-    let Some(context) = report_context.as_mut().and_then(Value::as_object_mut) else {
-        return;
-    };
-    if context.contains_key("cache_read_input_tokens") {
-        return;
-    }
-    let Some(input_tokens) = context.get("input_tokens").and_then(Value::as_u64) else {
-        return;
-    };
-    let cache_read_tokens = config.cache_read_tokens(input_tokens);
-    context.insert(
-        "cache_read_input_tokens".to_string(),
-        Value::from(cache_read_tokens),
-    );
 }
 
 fn invalid_gemini_provider_success_message(
@@ -3260,7 +3160,7 @@ async fn execute_execution_runtime_sync_impl(
     let mut client_body_json = body_json.clone();
     let mut client_body_bytes = body_bytes;
     let simulated_cache_rewritten = client_body_json.as_mut().is_some_and(|body| {
-        apply_simulated_cache_usage_to_openai_body(
+        apply_simulated_cache_usage_to_body(
             body,
             plan.client_api_format.as_str(),
             report_context.as_ref(),
@@ -3498,6 +3398,9 @@ async fn execute_sync_via_remote_execution_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution_runtime::kiro_cache::{
+        seed_simulated_cache_mode_in_report_context, simulated_cache_mode_from_provider_config,
+    };
     use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
     use aether_data::repository::usage::InMemoryUsageReadRepository;
     use aether_data_contracts::repository::candidates::RequestCandidateReadRepository;
