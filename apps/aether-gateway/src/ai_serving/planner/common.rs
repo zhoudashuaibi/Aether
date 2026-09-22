@@ -46,7 +46,8 @@ pub(crate) fn force_upstream_streaming_for_provider(
     provider_type: &str,
     provider_api_format: &str,
 ) -> bool {
-    force_upstream_streaming_for_provider_impl(provider_type, provider_api_format)
+    (provider_type.eq_ignore_ascii_case("command_code") && provider_api_format == "openai:chat")
+        || force_upstream_streaming_for_provider_impl(provider_type, provider_api_format)
 }
 
 pub(crate) fn resolve_upstream_is_stream_for_provider(
@@ -56,6 +57,9 @@ pub(crate) fn resolve_upstream_is_stream_for_provider(
     client_is_stream: bool,
     hard_requires_streaming: bool,
 ) -> bool {
+    if provider_type.eq_ignore_ascii_case("command_code") && provider_api_format == "openai:chat" {
+        return true;
+    }
     resolve_upstream_is_stream_for_provider_impl(
         endpoint_config,
         provider_type,

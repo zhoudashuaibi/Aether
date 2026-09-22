@@ -45,6 +45,9 @@
                   <SelectItem value="vertex_ai">
                     Vertex AI
                   </SelectItem>
+                  <SelectItem value="command_code">
+                    Command Code
+                  </SelectItem>
                   <SelectItem value="claude_code">
                     {{ legacyT('Claude Code（实验性功能）') }}
                   </SelectItem>
@@ -80,6 +83,9 @@
                   </SelectItem>
                   <SelectItem value="vertex_ai">
                     Vertex AI
+                  </SelectItem>
+                  <SelectItem value="command_code">
+                    Command Code
                   </SelectItem>
                   <SelectItem value="claude_code">
                     {{ legacyT('Claude Code（实验性功能）') }}

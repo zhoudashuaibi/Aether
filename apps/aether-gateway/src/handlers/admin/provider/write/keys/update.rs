@@ -97,6 +97,19 @@ pub(crate) fn build_admin_update_provider_key_record_with_existing_keys(
         .as_deref()
         .map(str::trim)
         .map(ToOwned::to_owned);
+    if provider
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case("command_code")
+    {
+        if !matches!(target_auth_type.as_str(), "api_key" | "bearer") {
+            return Err("Command Code 仅支持 user_* 凭据".to_string());
+        }
+        if let Some(secret) = api_key_value.as_deref().filter(|secret| !secret.is_empty()) {
+            aether_provider_transport::command_code::validate_credential(secret)
+                .map_err(str::to_string)?;
+        }
+    }
     let auth_config_present = fields.contains("auth_config");
     let auth_config = normalize_json_object(payload.auth_config, "auth_config")?;
     let auth_config_object = auth_config

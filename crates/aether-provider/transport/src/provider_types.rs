@@ -174,6 +174,24 @@ const AUTO_STREAM_ENDPOINT_CONFIG_DEFAULTS: &[FixedProviderEndpointConfigDefault
     }];
 
 const STANDARD_RUNTIME_POLICY: ProviderRuntimePolicy = ProviderRuntimePolicy::standard();
+const COMMAND_CODE_FIXED_PROVIDER_TEMPLATE: FixedProviderTemplate = FixedProviderTemplate {
+    provider_type: "command_code",
+    version: 1,
+    base_url: crate::command_code::BASE_URL,
+    endpoints: &[FixedProviderEndpointTemplate {
+        item_key: "openai:chat",
+        api_format: "openai:chat",
+        custom_path: Some(crate::command_code::GENERATE_PATH),
+        config_defaults: FORCE_STREAM_ENDPOINT_CONFIG_DEFAULTS,
+    }],
+    runtime_policy: ProviderRuntimePolicy {
+        fixed_provider: true,
+        api_format_inheritance: ProviderApiFormatInheritance::OAuthOrBearer,
+        enable_format_conversion_by_default: true,
+        supports_local_same_format_transport: false,
+        ..STANDARD_RUNTIME_POLICY
+    },
+};
 const CUSTOM_RUNTIME_POLICY: ProviderRuntimePolicy = ProviderRuntimePolicy {
     local_embedding_support: ProviderLocalEmbeddingSupport::AnyKnown,
     ..STANDARD_RUNTIME_POLICY
@@ -533,6 +551,7 @@ pub fn provider_runtime_policy(provider_type: &str) -> ProviderRuntimePolicy {
 
 pub fn fixed_provider_template(provider_type: &str) -> Option<&'static FixedProviderTemplate> {
     match provider_type.trim().to_ascii_lowercase().as_str() {
+        "command_code" => Some(&COMMAND_CODE_FIXED_PROVIDER_TEMPLATE),
         "claude_code" => Some(&CLAUDE_CODE_FIXED_PROVIDER_TEMPLATE),
         "codex" => Some(&CODEX_FIXED_PROVIDER_TEMPLATE),
         "chatgpt_web" => Some(&CHATGPT_WEB_FIXED_PROVIDER_TEMPLATE),
@@ -996,6 +1015,19 @@ mod tests {
         assert!(gemini_cli.supports_model_fetch);
         assert!(!gemini_cli.supports_local_openai_chat_transport);
         assert!(gemini_cli.supports_local_same_format_transport);
+    }
+
+    #[test]
+    fn command_code_requires_private_chat_adapter() {
+        let template = fixed_provider_template("command_code").unwrap();
+        assert_eq!(template.base_url, "https://api.commandcode.ai");
+        assert_eq!(template.endpoints.len(), 1);
+        assert_eq!(template.endpoints[0].api_format, "openai:chat");
+        assert_eq!(template.endpoints[0].custom_path, Some("/alpha/generate"));
+        let policy = template.runtime_policy;
+        assert!(policy.fixed_provider && policy.enable_format_conversion_by_default);
+        assert!(policy.supports_local_openai_chat_transport && policy.supports_model_fetch);
+        assert!(!policy.supports_local_same_format_transport);
     }
 
     #[test]

@@ -138,6 +138,8 @@ RUN set -eux; \
 # ==================== 运行时镜像 ====================
 FROM scratch
 
+COPY THIRD_PARTY_NOTICES /app/THIRD_PARTY_NOTICES
+
 # 复制 gateway 二进制
 COPY --from=runtime-prep /runtime-root/ /
 

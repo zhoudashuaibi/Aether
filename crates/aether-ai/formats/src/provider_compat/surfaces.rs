@@ -6,6 +6,7 @@ pub const KIRO_ENVELOPE_NAME: &str = "kiro:generateAssistantResponse";
 pub const ANTIGRAVITY_V1INTERNAL_ENVELOPE_NAME: &str = "antigravity:v1internal";
 pub const GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME: &str = "gemini_cli:v1internal";
 pub const WINDSURF_ENVELOPE_NAME: &str = "windsurf:GetChatMessage";
+pub const COMMAND_CODE_ENVELOPE_NAME: &str = "command_code:generate";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderAdaptationSurface {
@@ -14,6 +15,7 @@ pub enum ProviderAdaptationSurface {
     GeminiCliV1Internal,
     KiroClaudeCli,
     WindsurfCascade,
+    CommandCode,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +32,17 @@ pub struct ProviderAdaptationDescriptor {
 }
 
 const PROVIDER_ADAPTATION_SURFACES: &[ProviderAdaptationDescriptor] = &[
+    ProviderAdaptationDescriptor {
+        surface: ProviderAdaptationSurface::CommandCode,
+        provider_type: Some("command_code"),
+        envelope_name: COMMAND_CODE_ENVELOPE_NAME,
+        anchor_api_format: "openai:chat",
+        supports_request_bridge: true,
+        supports_sync_finalize_bridge: true,
+        supports_stream_bridge: true,
+        requires_eventstream_accept: false,
+        unwraps_response_envelope: false,
+    },
     ProviderAdaptationDescriptor {
         surface: ProviderAdaptationSurface::AntigravityGeminiChat,
         provider_type: Some(ANTIGRAVITY_PROVIDER_TYPE),

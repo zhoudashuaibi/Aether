@@ -4,7 +4,9 @@ use serde_json::Value;
 
 use crate::formats::shared::stream_core::common::openai_stream_terminal_error_body;
 use crate::formats::shared::AiSurfaceFinalizeError;
+use crate::provider_compat::command_code::CommandCodeStreamNormalizer;
 use crate::provider_compat::kiro_stream::KiroToClaudeCliStreamState;
+use crate::provider_compat::surfaces::COMMAND_CODE_ENVELOPE_NAME;
 
 use super::surfaces::{
     provider_adaptation_allows_sync_finalize_envelope, provider_adaptation_descriptor_for_envelope,
@@ -89,7 +91,7 @@ pub fn normalize_provider_private_response_value(
     }
 
     let mut unwrapped = match report_context.get("envelope_name").and_then(Value::as_str) {
-        Some(KIRO_ENVELOPE_NAME) => data,
+        Some(KIRO_ENVELOPE_NAME | COMMAND_CODE_ENVELOPE_NAME) => data,
         Some(GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME) => {
             if let Some(response) = data
                 .get("response")
@@ -351,6 +353,7 @@ fn drain_windsurf_connect_json_frames(
 enum ProviderPrivateStreamNormalizeMode {
     EnvelopeUnwrap,
     KiroToClaudeCli(Box<KiroToClaudeCliStreamState>),
+    CommandCode(Box<CommandCodeStreamNormalizer>),
 }
 
 pub struct ProviderPrivateStreamNormalizer<'a> {
@@ -395,6 +398,10 @@ pub fn maybe_build_provider_private_stream_normalizer<'a>(
         ProviderPrivateStreamNormalizeMode::KiroToClaudeCli(Box::new(
             KiroToClaudeCliStreamState::new(report_context),
         ))
+    } else if descriptor.envelope_name == COMMAND_CODE_ENVELOPE_NAME {
+        ProviderPrivateStreamNormalizeMode::CommandCode(Box::new(CommandCodeStreamNormalizer::new(
+            report_context,
+        )))
     } else if descriptor.unwraps_response_envelope {
         ProviderPrivateStreamNormalizeMode::EnvelopeUnwrap
     } else {
@@ -424,6 +431,7 @@ pub fn extract_provider_private_stream_error_body(
 impl ProviderPrivateStreamNormalizer<'_> {
     pub fn push_chunk(&mut self, chunk: &[u8]) -> Result<Vec<u8>, AiSurfaceFinalizeError> {
         match &mut self.mode {
+            ProviderPrivateStreamNormalizeMode::CommandCode(state) => state.push_chunk(chunk),
             ProviderPrivateStreamNormalizeMode::KiroToClaudeCli(state) => {
                 state.push_chunk(self.report_context, chunk)
             }
@@ -465,6 +473,7 @@ impl ProviderPrivateStreamNormalizer<'_> {
 
     pub fn finish(&mut self) -> Result<Vec<u8>, AiSurfaceFinalizeError> {
         match &mut self.mode {
+            ProviderPrivateStreamNormalizeMode::CommandCode(state) => state.finish(),
             ProviderPrivateStreamNormalizeMode::KiroToClaudeCli(state) => {
                 state.finish(self.report_context)
             }

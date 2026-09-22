@@ -6,6 +6,7 @@ mod auth_config;
 mod cache;
 pub mod claude_code;
 mod codex_fingerprint;
+pub mod command_code;
 pub mod conversion;
 mod diagnostics;
 pub mod gemini_cli;

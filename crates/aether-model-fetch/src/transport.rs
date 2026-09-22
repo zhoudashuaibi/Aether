@@ -626,6 +626,16 @@ fn standard_models_fetch_headers(
 ) -> BTreeMap<String, String> {
     let api_format = aether_ai_formats::normalize_api_format_alias(api_format);
     let provider_type = provider_type.trim().to_ascii_lowercase();
+    if provider_type == "command_code" {
+        return BTreeMap::from([
+            ("accept".to_string(), "application/json".to_string()),
+            ("x-cli-environment".to_string(), "production".to_string()),
+            (
+                "x-command-code-version".to_string(),
+                aether_provider_transport::command_code::CLI_VERSION.to_string(),
+            ),
+        ]);
+    }
     if provider_type == "codex" && api_format.starts_with("openai:") {
         let client_version = codex_client_version
             .map(str::trim)
@@ -877,6 +887,27 @@ mod tests {
                 ),
             },
         }
+    }
+
+    #[tokio::test]
+    async fn builds_command_code_models_plan_with_cli_identity() {
+        let runtime = TestRuntime {
+            oauth_auth: None,
+            proxy: None,
+        };
+        let mut transport = sample_transport("command_code", "openai:chat", "bearer");
+        transport.key.decrypted_api_key = "user_test".to_string();
+        transport.key.decrypted_auth_config = None;
+        let plan = build_models_fetch_execution_plan(&runtime, &transport)
+            .await
+            .expect("plan");
+        assert_eq!(plan.method, "GET");
+        assert_eq!(plan.url, "https://example.com/provider/v1/models");
+        assert_eq!(plan.headers["authorization"], "Bearer user_test");
+        assert_eq!(plan.headers["x-command-code-version"], "1.53.1");
+        assert!(!plan
+            .headers
+            .contains_key(aether_provider_transport::command_code::INTERNAL_HEADER));
     }
 
     #[tokio::test]

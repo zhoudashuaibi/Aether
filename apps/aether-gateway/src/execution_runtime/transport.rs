@@ -1483,6 +1483,8 @@ pub(crate) async fn execute_stream_plan_via_local_tunnel(
         return Ok(None);
     };
 
+    super::command_code::ensure_initialized(plan, Some(state)).await;
+
     validate_execution_upstream_url(plan.url.as_str())?;
     if let Some(detail) = gateway_frontdoor_self_loop_guard_error(plan.url.as_str()) {
         return Err(ExecutionRuntimeTransportError::UpstreamRequest(detail));
@@ -1540,12 +1542,17 @@ pub(crate) async fn execute_stream_plan_via_local_tunnel(
 }
 
 fn build_stream_summary_report_context(plan: &ExecutionPlan) -> Value {
-    json!({
+    let mut context = json!({
         "provider_api_format": plan.provider_api_format,
         "client_api_format": plan.client_api_format,
         "model": plan.model_name,
         "upstream_is_stream": plan.stream,
-    })
+    });
+    if super::command_code::is_generation(plan) {
+        context["has_envelope"] = json!(true);
+        context["envelope_name"] = json!(aether_provider_transport::command_code::ENVELOPE_NAME);
+    }
+    context
 }
 
 pub(crate) async fn record_manual_proxy_request_success(state: &AppState, plan: &ExecutionPlan) {
@@ -1639,6 +1646,7 @@ async fn execute_sync_plan_via_local_tunnel_inner(
     plan: &ExecutionPlan,
     report_context: Option<&serde_json::Value>,
 ) -> Result<ExecutionResult, ExecutionRuntimeTransportError> {
+    super::command_code::ensure_initialized(plan, Some(state)).await;
     let node_id = resolve_local_tunnel_node_id(state, plan.proxy.as_ref()).ok_or_else(|| {
         ExecutionRuntimeTransportError::RelayError("local tunnel node unavailable".to_string())
     })?;
@@ -1836,6 +1844,50 @@ pub(crate) async fn send_request(
 }
 
 async fn send_request_inner(
+    plan: &ExecutionPlan,
+    body_bytes: Vec<u8>,
+    apply_request_total_timeout: bool,
+) -> Result<DirectHttpResponse, ExecutionRuntimeTransportError> {
+    super::command_code::ensure_initialized(plan, None).await;
+    send_request_raw(plan, body_bytes, apply_request_total_timeout).await
+}
+
+pub(super) async fn send_command_code_initialization(
+    state: Option<&AppState>,
+    plan: &ExecutionPlan,
+    body: Vec<u8>,
+) -> bool {
+    if let Some((state, node_id)) = state.and_then(|state| {
+        resolve_local_tunnel_node_id(state, plan.proxy.as_ref()).map(|node| (state, node))
+    }) {
+        if validate_execution_upstream_url(&plan.url).is_err()
+            || gateway_frontdoor_self_loop_guard_error(&plan.url).is_some()
+        {
+            return false;
+        }
+        let Ok(headers) = build_request_headers(&plan.headers, None, false) else {
+            return false;
+        };
+        return state
+            .tunnel
+            .open_direct_relay_stream(
+                &node_id,
+                build_direct_tunnel_request_meta(
+                    plan,
+                    &headers,
+                    resolve_execution_transport_controls(&plan.headers),
+                ),
+                Bytes::from(body),
+            )
+            .await
+            .is_ok_and(|response| (200..300).contains(&response.status()));
+    }
+    send_request_raw(plan, body, true)
+        .await
+        .is_ok_and(|response| (200..300).contains(&response.status_code()))
+}
+
+async fn send_request_raw(
     plan: &ExecutionPlan,
     body_bytes: Vec<u8>,
     apply_request_total_timeout: bool,

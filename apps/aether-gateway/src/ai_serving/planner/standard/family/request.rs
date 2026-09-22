@@ -888,6 +888,18 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         .await);
     }
 
+    aether_provider_transport::command_code::adapt_request(
+        transport,
+        effective_headers,
+        &input.auth_context.api_key_id,
+        body_json,
+        &mut provider_request_body,
+    )
+    .map_err(|message| GatewayError::Client {
+        status: http::StatusCode::BAD_REQUEST,
+        message: message.to_string(),
+    })?;
+
     let upstream_url = match crate::ai_serving::planner::standard::build_standard_upstream_url(
         parts,
         transport,
@@ -972,7 +984,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         provider_request_headers,
         upstream_url,
         upstream_is_stream,
-        envelope_name: None,
+        envelope_name: aether_provider_transport::command_code::envelope_name(transport),
         transport: Arc::clone(transport),
         transport_profile: None,
         request_redacted: redaction.redacted,

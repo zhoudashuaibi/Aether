@@ -29,6 +29,13 @@ pub(crate) fn maybe_normalize_provider_private_sync_report_payload(
 
     let mut normalized = payload.clone();
     normalized.report_context = normalize_provider_private_report_context(Some(report_context));
+    if !(200..300).contains(&payload.status_code)
+        && report_context.get("envelope_name").and_then(Value::as_str)
+            == Some(aether_provider_transport::command_code::ENVELOPE_NAME)
+    {
+        // HTTP error bodies are ordinary JSON/text, not the generation NDJSON.
+        return Ok(Some(normalized));
+    }
     if let (Some(body_json), Some(context)) = (
         payload.body_json.as_ref(),
         normalized.report_context.as_mut(),
@@ -111,4 +118,24 @@ fn normalize_provider_private_stream_bytes(
     let mut normalized = normalizer.push_chunk(body).map_err(GatewayError::from)?;
     normalized.extend(normalizer.finish().map_err(GatewayError::from)?);
     Ok(Some(normalized))
+}
+
+#[cfg(test)]
+mod command_code_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn http_failure_is_not_parsed_as_generation_events() {
+        let report: GatewaySyncReportRequest = serde_json::from_value(json!({
+            "trace_id":"test", "report_kind":"openai_chat_sync_finalize", "status_code":401, "headers":{},
+            "report_context":{"has_envelope":true, "envelope_name":"command_code:generate", "provider_api_format":"openai:chat"},
+            "body_base64":base64::engine::general_purpose::STANDARD.encode(b"{\"error\":\"unauthorized\"}")
+        })).unwrap();
+        let normalized = maybe_normalize_provider_private_sync_report_payload(&report)
+            .unwrap()
+            .unwrap();
+        assert_eq!(normalized.status_code, 401);
+        assert_eq!(normalized.body_base64, report.body_base64);
+    }
 }

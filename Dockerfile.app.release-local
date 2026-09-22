@@ -139,6 +139,8 @@ COPY --from=frontend-builder /app/frontend/dist /runtime-root/opt/aether/release
 # ==================== 运行时镜像 ====================
 FROM scratch
 
+COPY THIRD_PARTY_NOTICES /opt/aether/releases/image/THIRD_PARTY_NOTICES
+
 COPY --from=runtime-prep /runtime-root/ /
 
 WORKDIR /app

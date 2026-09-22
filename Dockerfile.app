@@ -18,6 +18,7 @@ RUN mkdir -p /opt/aether/releases/image/bin /opt/aether/releases/image/frontend 
 
 COPY dist/aether-gateway-${TARGETARCH} /opt/aether/releases/image/bin/aether-gateway
 COPY dist/frontend/ /opt/aether/releases/image/frontend/
+COPY THIRD_PARTY_NOTICES /opt/aether/releases/image/THIRD_PARTY_NOTICES
 
 # Keep the immutable release root-owned while guaranteeing that the runtime
 # identity can traverse and read every packaged asset.

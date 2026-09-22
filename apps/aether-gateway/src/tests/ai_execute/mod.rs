@@ -106,6 +106,7 @@ pub(super) fn ai_execute_provider_stop_on_status_code(
     provider
 }
 
+mod command_code;
 mod control_execute;
 mod fallback;
 mod finalize_local;

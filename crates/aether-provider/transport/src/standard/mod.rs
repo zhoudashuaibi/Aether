@@ -318,6 +318,9 @@ pub fn apply_standard_provider_request_body_rules_with_request_headers(
 pub fn build_standard_provider_request_headers(
     input: StandardProviderRequestHeadersInput<'_>,
 ) -> Option<StandardProviderRequestHeaders> {
+    if crate::command_code::is_command_code(input.transport) {
+        return crate::command_code::build_headers(input);
+    }
     let uses_vertex_query_auth =
         uses_vertex_api_key_query_auth(input.transport, input.provider_api_format);
     let is_claude_code_messages = input

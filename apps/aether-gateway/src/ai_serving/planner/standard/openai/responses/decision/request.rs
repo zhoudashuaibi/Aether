@@ -635,6 +635,17 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts_with_
     {
         log_responses_to_chat_tool_conversion(trace_id, body_json, &base_provider_request_body);
     }
+    aether_provider_transport::command_code::adapt_request(
+        &transport,
+        effective_headers,
+        &input.auth_context.api_key_id,
+        body_json,
+        &mut base_provider_request_body,
+    )
+    .map_err(|message| GatewayError::Client {
+        status: http::StatusCode::BAD_REQUEST,
+        message: message.to_string(),
+    })?;
     let provider_request_body = base_provider_request_body;
 
     if let Some(kiro_auth) = kiro_auth.as_ref() {
@@ -908,7 +919,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts_with_
         execution_strategy,
         conversion_mode,
         is_antigravity: false,
-        envelope_name: None,
+        envelope_name: aether_provider_transport::command_code::envelope_name(&transport),
         upstream_is_stream,
         transport: Arc::clone(&transport),
         transport_profile,

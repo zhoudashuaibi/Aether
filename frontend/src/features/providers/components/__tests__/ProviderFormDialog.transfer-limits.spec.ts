@@ -302,6 +302,23 @@ describe('ProviderFormDialog billing configuration', () => {
 })
 
 describe('ProviderFormDialog provider types', () => {
+  it('creates a Command Code provider from the add dialog', async () => {
+    mountDialog(null)
+    await settle()
+    const select = [...document.body.querySelectorAll<HTMLSelectElement>('select')]
+      .find(item => item.querySelector('option[value="command_code"]'))
+    if (!select) throw new Error('Missing Command Code provider option')
+    await setInput('#name', 'Command Code')
+    select.value = 'command_code'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    await nextTick()
+    clickButton('创建')
+    await settle()
+    expect(endpointMocks.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Command Code', provider_type: 'command_code',
+    }))
+  })
+
   it('creates an experimental Claude Code provider from the add dialog', async () => {
     mountDialog(null)
     await settle()

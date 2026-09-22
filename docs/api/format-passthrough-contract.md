@@ -22,6 +22,8 @@ Important limitation:
 
 Provider schema drift does not change this rule. If OpenAI, Claude, or Gemini add a new field, same-format runtime routing must still forward it as part of the original provider body. The schema inventory and field coverage matrix are audit aids, not the runtime allowlist for same-format traffic.
 
+Command Code 使用 `openai:chat` 作为内部转换锚点，上游实际为 `/alpha/generate` 私有 JSON/NDJSON 协议。它禁用通用同格式透传，经过专用请求适配和响应 normalizer；未映射字段会明确拒绝。此限制仅适用于该私有提供商，支持范围见 [Command Code 提供商](../operations/command-code-provider.md)。
+
 ## Canonical Same-Format Roundtrip
 
 Canonical same-format roundtrip is only a test/audit mode:

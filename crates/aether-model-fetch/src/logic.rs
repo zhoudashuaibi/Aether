@@ -84,7 +84,12 @@ pub fn build_models_fetch_url_for_client_version(
         return None;
     }
     let provider_type = provider_type.trim().to_ascii_lowercase();
-    let url = if provider_type == "codex" && api_format.starts_with("openai:") {
+    let url = if provider_type == "command_code" && api_format == "openai:chat" {
+        Some(format!(
+            "{}/provider/v1/models",
+            base_url.trim_end_matches('/')
+        ))
+    } else if provider_type == "codex" && api_format.starts_with("openai:") {
         build_codex_models_url(base_url, codex_client_version)
     } else if api_format.starts_with("openai:") {
         build_v1_models_url(base_url)

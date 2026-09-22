@@ -80,6 +80,12 @@
             />
           </template>
           <p
+            v-if="providerType === 'command_code'"
+            class="text-xs text-muted-foreground"
+          >
+            填写 Command Code 的 user_* 凭据，无需添加 Bearer 前缀。
+          </p>
+          <p
             v-if="editingKey && isRawSecretAuthType(form.auth_type)"
             class="text-xs text-muted-foreground mt-1"
           >
@@ -432,6 +438,9 @@ function normalizeFormAuthType(authType: string | null | undefined): ProviderKey
 }
 
 function getAuthTypeOptions(providerType: ProviderType | null): AuthTypeOption[] {
+  if (providerType === 'command_code') {
+    return [{ value: 'bearer', label: 'Bearer Token' }]
+  }
   if ((providerType || '').toLowerCase() === 'vertex_ai') {
     return [
       { value: 'api_key', label: 'API Key' },
@@ -554,9 +563,10 @@ const authSecretLabel = computed(() => {
   return legacyT('API 密钥')
 })
 
-const authSecretPlaceholder = computed(() =>
-  form.value.auth_type === 'bearer' ? 'token-...' : 'sk-...'
-)
+const authSecretPlaceholder = computed(() => {
+  if (props.providerType === 'command_code') return 'user_...'
+  return form.value.auth_type === 'bearer' ? 'token-...' : 'sk-...'
+})
 
 const authSecretRequiredMark = computed(() => {
   if (form.value.auth_type === 'service_account' && (!props.editingKey || switchingToServiceAccount.value)) {

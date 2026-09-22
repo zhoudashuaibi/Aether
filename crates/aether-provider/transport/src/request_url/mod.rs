@@ -87,6 +87,16 @@ fn build_transport_request_url_inner(
     params: TransportRequestUrlParams<'_>,
     gemini_embedding_batch: bool,
 ) -> Option<String> {
+    if crate::command_code::is_command_code(transport) {
+        return (params.provider_api_format == "openai:chat" && params.api_operation.is_none())
+            .then(|| {
+                format!(
+                    "{}{}",
+                    transport.endpoint.base_url.trim_end_matches('/'),
+                    crate::command_code::GENERATE_PATH
+                )
+            });
+    }
     let provider_api_format = params.provider_api_format.trim().to_ascii_lowercase();
     let normalized_provider_api_format =
         aether_ai_formats::normalize_api_format_alias(&provider_api_format);
@@ -870,6 +880,74 @@ mod tests {
                 decrypted_auth_config: None,
             },
         }
+    }
+
+    #[test]
+    fn command_code_builds_private_request_and_protects_selected_credential() {
+        let mut transport = sample_transport(
+            "command_code",
+            "openai:chat",
+            "https://api.commandcode.ai/",
+            Some("/wrong"),
+        );
+        transport.key.decrypted_api_key = "user_test".to_string();
+        let mut incoming = http::HeaderMap::new();
+        incoming.insert("authorization", "Bearer downstream_secret".parse().unwrap());
+        incoming.insert("cookie", "downstream_cookie".parse().unwrap());
+        let original = json!({"model": "test", "stream": false, "messages": [{"role": "user", "content": "hi"}]});
+        let mut body = original.clone();
+        crate::command_code::adapt_request(
+            &transport,
+            &incoming,
+            "caller-key",
+            &original,
+            &mut body,
+        )
+        .unwrap();
+        let extra_headers = std::collections::BTreeMap::new();
+        let rules = json!([
+            {"action": "set", "key": "authorization", "value": "Bearer wrong"},
+            {"action": "set", "key": "x-session-id", "value": "wrong-session"},
+            {"action": "set", "key": "x-test-tag", "value": "configured"}
+        ]);
+        let headers = crate::build_standard_provider_request_headers(
+            crate::StandardProviderRequestHeadersInput {
+                transport: &transport,
+                provider_api_format: "openai:chat",
+                same_format: true,
+                headers: &incoming,
+                auth_header: "authorization",
+                auth_value: "Bearer user_test",
+                extra_headers: &extra_headers,
+                header_rules: Some(&rules),
+                provider_request_body: &body,
+                original_request_body: &original,
+                upstream_is_stream: true,
+            },
+        )
+        .unwrap()
+        .headers;
+        assert_eq!(body["params"]["stream"], true);
+        assert_eq!(headers["authorization"], "Bearer user_test");
+        assert_eq!(headers["x-session-id"], body["threadId"].as_str().unwrap());
+        assert_eq!(headers["x-test-tag"], "configured");
+        assert!(!headers.contains_key("cookie"));
+        assert!(!serde_json::to_string(&headers)
+            .unwrap()
+            .contains("downstream_secret"));
+        let url = build_transport_request_url(
+            &transport,
+            TransportRequestUrlParams {
+                provider_api_format: "openai:chat",
+                mapped_model: Some("test"),
+                upstream_is_stream: true,
+                request_query: Some("key=downstream_secret"),
+                kiro_api_region: None,
+                api_operation: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(url, "https://api.commandcode.ai/alpha/generate");
     }
 
     #[test]

@@ -582,7 +582,10 @@ fn should_treat_upstream_response_as_stream(
     report_context
         .get("envelope_name")
         .and_then(Value::as_str)
-        .is_some_and(|value| value.eq_ignore_ascii_case(crate::ai_serving::KIRO_ENVELOPE_NAME))
+        .is_some_and(|value| {
+            value.eq_ignore_ascii_case(crate::ai_serving::KIRO_ENVELOPE_NAME)
+                || value.eq_ignore_ascii_case("command_code:generate")
+        })
 }
 
 fn should_buffer_non_stream_response(

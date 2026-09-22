@@ -349,6 +349,7 @@ jobs:
             install -m 0755 generate_keys.sh "${root}/generate_keys.sh"
             install -m 0644 README.md "${root}/README.md"
             install -m 0644 LICENSE "${root}/LICENSE"
+            install -m 0644 THIRD_PARTY_NOTICES "${root}/THIRD_PARTY_NOTICES"
 
             tar -C package -czf "release-assets/${bundle}.tar.gz" "${bundle}"
           done

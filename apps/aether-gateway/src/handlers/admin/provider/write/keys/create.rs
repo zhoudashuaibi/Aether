@@ -46,6 +46,17 @@ pub(crate) async fn build_admin_create_provider_key_record(
     };
 
     let api_key = payload.api_key.unwrap_or_default().trim().to_string();
+    if provider
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case("command_code")
+    {
+        if !matches!(auth_type.as_str(), "api_key" | "bearer") {
+            return Err("Command Code 仅支持 user_* 凭据".to_string());
+        }
+        aether_provider_transport::command_code::validate_credential(&api_key)
+            .map_err(str::to_string)?;
+    }
     let auth_config = normalize_json_object(payload.auth_config, "auth_config")?;
     let auth_config_object = auth_config
         .as_ref()
