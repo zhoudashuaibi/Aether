@@ -37,13 +37,12 @@ pub(crate) fn normalize_simulated_cache_config(
 
 pub(crate) fn normalize_provider_type_input(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "custom" | "claude_code" | "kiro" | "codex" | "chatgpt_web" | "gemini_cli"
-        | "antigravity" | "vertex_ai" | "grok" | "windsurf" | "xai" => Ok(normalized),
-        _ => Err(
-            "provider_type 仅支持 custom / claude_code / kiro / codex / chatgpt_web / gemini_cli / antigravity / vertex_ai / grok / windsurf / xai"
-                .to_string(),
-        ),
+    if normalized == "custom"
+        || crate::provider_transport::provider_types::fixed_provider_template(&normalized).is_some()
+    {
+        Ok(normalized)
+    } else {
+        Err("provider_type 必须为 custom 或已注册的固定提供商类型".to_string())
     }
 }
 
@@ -446,6 +445,18 @@ mod tests {
             normalize_provider_type_input(" xAI ").expect("type should normalize"),
             "xai"
         );
+    }
+
+    #[test]
+    fn normalize_provider_type_accepts_command_code_and_rejects_unknown_types() {
+        assert_eq!(
+            normalize_provider_type_input(" Command_Code ").unwrap(),
+            "command_code"
+        );
+        assert_eq!(normalize_provider_type_input(" Custom ").unwrap(), "custom");
+        for unsupported in ["", "openai", "command-code", "unknown_provider"] {
+            assert!(normalize_provider_type_input(unsupported).is_err());
+        }
     }
 
     #[test]

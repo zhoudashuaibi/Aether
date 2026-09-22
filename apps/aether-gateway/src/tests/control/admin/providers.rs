@@ -40,6 +40,7 @@ use crate::data::GatewayDataState;
 
 const ADMIN_PROVIDERS_DATA_UNAVAILABLE_DETAIL: &str = "Admin provider catalog data unavailable";
 
+mod command_code;
 mod health;
 
 async fn provider_health_summary(
