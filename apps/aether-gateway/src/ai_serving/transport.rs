@@ -10,6 +10,12 @@ pub(crate) mod claude_code {
     pub(crate) use aether_provider_transport::claude_code::*;
 }
 
+pub(crate) mod command_code {
+    pub(crate) use aether_provider_transport::command_code::{
+        adapt_request, envelope_name, mark_execution_headers,
+    };
+}
+
 pub(crate) mod kiro {
     pub(crate) use aether_provider_transport::kiro::*;
 }

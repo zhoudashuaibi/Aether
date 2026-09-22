@@ -536,7 +536,7 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
             return Ok(None);
         }
 
-        aether_provider_transport::command_code::adapt_request(
+        crate::ai_serving::transport::command_code::adapt_request(
             transport,
             effective_headers,
             &input.auth_context.api_key_id,
@@ -635,7 +635,7 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
             execution_strategy,
             conversion_mode,
             report_kind: resolved_report_kind,
-            envelope_name: aether_provider_transport::command_code::envelope_name(transport),
+            envelope_name: crate::ai_serving::transport::command_code::envelope_name(transport),
             transport: Arc::clone(transport),
             request_redacted: redaction.redacted,
             transport_profile,

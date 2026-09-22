@@ -34,6 +34,13 @@ pub fn envelope_name(transport: &GatewayProviderTransportSnapshot) -> Option<&'s
     is_command_code(transport).then_some(ENVELOPE_NAME)
 }
 
+/// Rebuild the runtime marker from trusted provider metadata after auth cleanup.
+pub fn mark_execution_headers(provider_type: Option<&str>, headers: &mut BTreeMap<String, String>) {
+    if provider_type.is_some_and(|value| value.trim().eq_ignore_ascii_case(PROVIDER_TYPE)) {
+        headers.insert(INTERNAL_HEADER.to_string(), "1".to_string());
+    }
+}
+
 /// Called after standard conversion, model mapping and operator body rules.
 pub fn adapt_request(
     transport: &GatewayProviderTransportSnapshot,

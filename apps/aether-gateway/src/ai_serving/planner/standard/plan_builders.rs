@@ -53,6 +53,10 @@ pub(crate) fn build_standard_sync_plan_from_decision(
             build_from_request_when_empty: false,
             accept_policy: StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreaming,
         });
+    crate::ai_serving::transport::command_code::mark_execution_headers(
+        payload.provider_type.as_deref(),
+        &mut provider_request_headers,
+    );
     let content_type = payload
         .content_type
         .take()
@@ -140,6 +144,10 @@ pub(crate) fn build_standard_stream_plan_from_decision(
             build_from_request_when_empty: false,
             accept_policy,
         });
+    crate::ai_serving::transport::command_code::mark_execution_headers(
+        payload.provider_type.as_deref(),
+        &mut provider_request_headers,
+    );
     let content_type = payload
         .content_type
         .take()
@@ -216,6 +224,39 @@ mod tests {
             .expect("request should build")
             .into_parts()
             .0
+    }
+
+    #[test]
+    fn command_code_runtime_marker_is_derived_from_provider_after_auth_cleanup() {
+        use aether_provider_transport::command_code::INTERNAL_HEADER;
+
+        for provider_type in ["command_code", "openai"] {
+            for stream in [false, true] {
+                let mut decision = decision_with_raw_body(stream);
+                decision.provider_type = Some(provider_type.to_string());
+                decision.auth_header = Some("authorization".to_string());
+                decision.auth_value = Some("Bearer user_fixture".to_string());
+                decision
+                    .provider_request_headers
+                    .insert(INTERNAL_HEADER.to_string(), "1".to_string());
+                let parts = request_parts();
+                let plan = if stream {
+                    build_standard_stream_plan_from_decision(&parts, &json!({}), decision, false)
+                        .unwrap()
+                        .unwrap()
+                        .plan
+                } else {
+                    build_standard_sync_plan_from_decision(&parts, &json!({}), decision)
+                        .unwrap()
+                        .unwrap()
+                        .plan
+                };
+                assert_eq!(
+                    plan.headers.contains_key(INTERNAL_HEADER),
+                    provider_type == "command_code"
+                );
+            }
+        }
     }
 
     #[test]

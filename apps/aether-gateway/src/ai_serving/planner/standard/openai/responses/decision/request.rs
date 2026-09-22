@@ -635,7 +635,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts_with_
     {
         log_responses_to_chat_tool_conversion(trace_id, body_json, &base_provider_request_body);
     }
-    aether_provider_transport::command_code::adapt_request(
+    crate::ai_serving::transport::command_code::adapt_request(
         &transport,
         effective_headers,
         &input.auth_context.api_key_id,
@@ -919,7 +919,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts_with_
         execution_strategy,
         conversion_mode,
         is_antigravity: false,
-        envelope_name: aether_provider_transport::command_code::envelope_name(&transport),
+        envelope_name: crate::ai_serving::transport::command_code::envelope_name(&transport),
         upstream_is_stream,
         transport: Arc::clone(&transport),
         transport_profile,
