@@ -38,6 +38,13 @@ fn plan(base: &str) -> ExecutionPlan {
     }
 }
 
+#[test]
+fn shared_transport_initialization_future_has_a_bounded_stack_footprint() {
+    let plan = plan("https://example.invalid");
+    let initialization = ensure_initialized(&plan, None);
+    assert!(std::mem::size_of_val(&initialization) <= 1024);
+}
+
 #[tokio::test]
 async fn initialization_is_single_flight_and_success_is_cached() {
     let calls = Arc::new(AtomicUsize::new(0));

@@ -28,6 +28,12 @@ pub(super) async fn ensure_initialized(plan: &ExecutionPlan, state: Option<&crat
     if !is_generation(plan) {
         return;
     }
+    // Initialization holds two HTTP futures. Keep them off the shared transport
+    // future so other providers do not inherit their stack footprint.
+    Box::pin(initialize(plan, state)).await;
+}
+
+async fn initialize(plan: &ExecutionPlan, state: Option<&crate::AppState>) {
     let Some(secret) = plan
         .headers
         .get("authorization")
